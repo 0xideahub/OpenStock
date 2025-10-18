@@ -1,10 +1,13 @@
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
+import { getCached, setCached, deleteCached, isCacheEnabled } from '../cache';
 
 const YAHOO_FC_URL = 'https://fc.yahoo.com';
 const YAHOO_CRUMB_URL = 'https://query1.finance.yahoo.com/v1/test/getcrumb';
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const SESSION_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const SESSION_TTL_SECONDS = Math.floor(SESSION_TTL_MS / 1000); // 900 seconds
+const SESSION_CACHE_KEY = 'yahoo:session';
 
 export interface YahooSession {
   cookieHeader: string;
@@ -12,6 +15,7 @@ export interface YahooSession {
   createdAt: number;
 }
 
+// In-memory cache as fallback when Redis is not available
 let cachedSession: YahooSession | null = null;
 let cachedSessionExpiresAt = 0;
 let inFlightSession: Promise<YahooSession> | null = null;
@@ -115,15 +119,35 @@ export async function getYahooSession(options?: {
 }): Promise<YahooSession> {
   const forceRefresh = options?.forceRefresh ?? false;
 
+  // Try Redis cache first (if enabled)
+  if (!forceRefresh && isCacheEnabled()) {
+    const cachedFromRedis = await getCached<YahooSession>(SESSION_CACHE_KEY);
+    if (cachedFromRedis) {
+      console.info('[yahoo-session] Retrieved from Redis cache');
+      return cachedFromRedis;
+    }
+  }
+
+  // Fall back to in-memory cache if Redis is not available
   if (!forceRefresh && cachedSession && Date.now() < cachedSessionExpiresAt) {
+    console.info('[yahoo-session] Retrieved from in-memory cache');
     return cachedSession;
   }
 
+  // Prevent concurrent session fetches
   if (!inFlightSession) {
     inFlightSession = fetchYahooSession()
-      .then((session) => {
+      .then(async (session) => {
+        // Store in Redis (if enabled)
+        if (isCacheEnabled()) {
+          await setCached(SESSION_CACHE_KEY, session, SESSION_TTL_SECONDS);
+          console.info('[yahoo-session] Stored new session in Redis');
+        }
+
+        // Also store in memory as fallback
         cachedSession = session;
         cachedSessionExpiresAt = Date.now() + SESSION_TTL_MS;
+
         return session;
       })
       .finally(() => {
@@ -134,6 +158,10 @@ export async function getYahooSession(options?: {
   const session = await inFlightSession;
 
   if (forceRefresh) {
+    // Update both Redis and in-memory cache
+    if (isCacheEnabled()) {
+      await setCached(SESSION_CACHE_KEY, session, SESSION_TTL_SECONDS);
+    }
     cachedSession = session;
     cachedSessionExpiresAt = Date.now() + SESSION_TTL_MS;
   }
@@ -141,7 +169,13 @@ export async function getYahooSession(options?: {
   return session;
 }
 
-export function invalidateYahooSession(): void {
+export async function invalidateYahooSession(): Promise<void> {
+  // Clear both Redis and in-memory cache
+  if (isCacheEnabled()) {
+    await deleteCached(SESSION_CACHE_KEY);
+    console.info('[yahoo-session] Invalidated Redis cache');
+  }
   cachedSession = null;
   cachedSessionExpiresAt = 0;
+  console.info('[yahoo-session] Invalidated in-memory cache');
 }

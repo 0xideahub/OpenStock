@@ -1,9 +1,12 @@
 import { getYahooSession, invalidateYahooSession } from './session';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
+import { getCached, setCached, isCacheEnabled } from '../cache';
 
 const YAHOO_QUOTE_SUMMARY_BASE =
   'https://query2.finance.yahoo.com/v10/finance/quoteSummary/';
 const FUNDAMENTALS_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const FUNDAMENTALS_TTL_SECONDS = Math.floor(FUNDAMENTALS_TTL_MS / 1000); // 43200 seconds
+const FUNDAMENTALS_CACHE_KEY_PREFIX = 'fundamentals:yahoo:';
 const REQUESTED_MODULES = [
   'financialData',
   'defaultKeyStatistics',
@@ -66,6 +69,7 @@ type CacheEntry = {
   expiresAt: number;
 };
 
+// In-memory cache as fallback when Redis is not available
 const fundamentalsCache = new Map<string, CacheEntry>();
 
 class InvalidYahooSessionError extends Error {
@@ -272,28 +276,55 @@ export async function fetchYahooFundamentals(
   }
 
   const forceRefresh = options?.forceRefresh ?? false;
+  const cacheKey = `${FUNDAMENTALS_CACHE_KEY_PREFIX}${normalizedSymbol}`;
 
+  // Try Redis cache first (if enabled)
+  if (!forceRefresh && isCacheEnabled()) {
+    const cachedFromRedis = await getCached<YahooFundamentals>(cacheKey);
+    if (cachedFromRedis) {
+      console.info(`[yahoo-fundamentals] Retrieved ${normalizedSymbol} from Redis cache`);
+      return cachedFromRedis;
+    }
+  }
+
+  // Fall back to in-memory cache if Redis is not available
   const now = Date.now();
   const cached = fundamentalsCache.get(normalizedSymbol);
   if (!forceRefresh && cached && cached.expiresAt > now) {
+    console.info(`[yahoo-fundamentals] Retrieved ${normalizedSymbol} from in-memory cache`);
     return cached.data;
   }
 
   try {
     const result = await performQuoteSummaryRequest(normalizedSymbol, forceRefresh);
+
+    // Store in Redis (if enabled)
+    if (isCacheEnabled()) {
+      await setCached(cacheKey, result, FUNDAMENTALS_TTL_SECONDS);
+      console.info(`[yahoo-fundamentals] Stored ${normalizedSymbol} in Redis cache`);
+    }
+
+    // Also store in memory as fallback
     fundamentalsCache.set(normalizedSymbol, {
       data: result,
       expiresAt: now + FUNDAMENTALS_TTL_MS,
     });
+
     return result;
   } catch (error) {
     if (error instanceof InvalidYahooSessionError && !forceRefresh) {
-      invalidateYahooSession();
+      await invalidateYahooSession();
       const retryResult = await performQuoteSummaryRequest(normalizedSymbol, true);
+
+      // Store retry result in both caches
+      if (isCacheEnabled()) {
+        await setCached(cacheKey, retryResult, FUNDAMENTALS_TTL_SECONDS);
+      }
       fundamentalsCache.set(normalizedSymbol, {
         data: retryResult,
         expiresAt: Date.now() + FUNDAMENTALS_TTL_MS,
       });
+
       return retryResult;
     }
     throw error;

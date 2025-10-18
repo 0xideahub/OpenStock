@@ -1,11 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { fetchFundamentalsWithFallback } from '@/lib/services/fundamentals';
-import {
-    checkRateLimit,
-    getRateLimitHeaders,
-    isRateLimitEnabled,
-} from '@/lib/ratelimit';
+import { checkRateLimit, getRateLimitHeaders } from '@/lib/ratelimit';
 
 export const revalidate = 0;
 
@@ -86,10 +82,24 @@ export async function GET(
             },
         );
     } catch (error) {
-        console.error('[api] fundamentals fetch failed', error);
+        console.error(`[api] fundamentals fetch failed for ${symbol}:`, error);
 
-        const message =
-            error instanceof Error ? error.message : 'Failed to fetch fundamentals';
+        let message = 'Failed to fetch fundamentals';
+
+        if (error instanceof Error) {
+            message = error.message;
+            // Log the full error stack for debugging
+            console.error('[api] Error stack:', error.stack);
+        }
+
+        // If it's an AggregateError (both Tiingo and Yahoo failed), provide details
+        if (error instanceof AggregateError) {
+            console.error('[api] Both Tiingo and Yahoo failed:');
+            error.errors.forEach((err, idx) => {
+                console.error(`[api]   Source ${idx + 1}:`, err instanceof Error ? err.message : err);
+            });
+            message = `Failed to fetch fundamentals for ${symbol} from all sources (Tiingo and Yahoo)`;
+        }
 
         return NextResponse.json(
             {
