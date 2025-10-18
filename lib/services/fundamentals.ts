@@ -252,6 +252,43 @@ const buildTiingoResult = (
   };
 };
 
+const mergeSupplementalMetrics = (
+  primary: NormalizedFundamentals,
+  supplemental: NormalizedFundamentals,
+): NormalizedFundamentals => {
+  const merged: FundamentalMetrics = { ...primary.metrics };
+
+  const keysToSupplement: Array<keyof FundamentalMetrics> = [
+    'dividendYield',
+    'payoutRatio',
+    'forwardPE',
+    'earningsGrowth',
+  ];
+
+  for (const key of keysToSupplement) {
+    const currentValue = merged[key];
+    const supplementalValue = supplemental.metrics[key];
+    if (
+      (currentValue === undefined || currentValue === null || currentValue === 0) &&
+      supplementalValue !== undefined &&
+      supplementalValue !== null
+    ) {
+      merged[key] = supplementalValue;
+    }
+  }
+
+  const warnings = [
+    ...(primary.warnings ?? []),
+    ...(supplemental.warnings ?? []),
+  ];
+
+  return {
+    ...primary,
+    metrics: merged,
+    warnings: warnings.length > 0 ? warnings : undefined,
+  };
+};
+
 const fetchFromTiingo = async (symbol: string): Promise<NormalizedFundamentals> => {
   if (!TIINGO_API_KEY) {
     throw new Error('Tiingo API key is not configured');
@@ -326,7 +363,33 @@ export async function fetchFundamentalsWithFallback(
   const errors: unknown[] = [];
 
   try {
-    return await fetchFromTiingo(normalizedSymbol);
+    const tiingoResult = await fetchFromTiingo(normalizedSymbol);
+
+    const needsSupplement =
+      tiingoResult.metrics.dividendYield === undefined ||
+      tiingoResult.metrics.dividendYield === null ||
+      tiingoResult.metrics.dividendYield === 0 ||
+      tiingoResult.metrics.payoutRatio === undefined ||
+      tiingoResult.metrics.payoutRatio === null;
+
+    if (!needsSupplement) {
+      return tiingoResult;
+    }
+
+    try {
+      const yahooSupplement = await fetchYahooFundamentals(normalizedSymbol, options);
+      const normalizedYahoo = normalizeYahooResult(yahooSupplement);
+      const merged = mergeSupplementalMetrics(tiingoResult, normalizedYahoo);
+      merged.source = tiingoResult.source;
+      return merged;
+    } catch (supplementError) {
+      const message =
+        supplementError instanceof Error ? supplementError.message : String(supplementError);
+      console.warn(
+        `[fundamentals] Unable to supplement Tiingo data for ${normalizedSymbol}: ${message}`,
+      );
+      return tiingoResult;
+    }
   } catch (error) {
     errors.push(error);
     const message =
