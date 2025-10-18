@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
+
 const YAHOO_FC_URL = 'https://fc.yahoo.com';
 const YAHOO_CRUMB_URL = 'https://query1.finance.yahoo.com/v1/test/getcrumb';
 const DEFAULT_USER_AGENT =
@@ -42,21 +44,25 @@ const getSetCookieHeader = (response: Response): string => {
 };
 
 const fetchYahooSession = async (): Promise<YahooSession> => {
-  const fcResponse = await fetch(YAHOO_FC_URL, {
-    headers: {
-      'User-Agent': DEFAULT_USER_AGENT,
-      Accept:
-        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept-Encoding': 'gzip, deflate, br, zstd',
-      Referer: 'https://finance.yahoo.com/',
-      'Sec-Fetch-Dest': 'document',
-      'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'same-site',
-      'Upgrade-Insecure-Requests': '1',
-      Connection: 'keep-alive',
+  const fcResponse = await fetchWithTimeout(
+    YAHOO_FC_URL,
+    {
+      headers: {
+        'User-Agent': DEFAULT_USER_AGENT,
+        Accept:
+          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
+        Referer: 'https://finance.yahoo.com/',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-site',
+        'Upgrade-Insecure-Requests': '1',
+        Connection: 'keep-alive',
+      },
     },
-  });
+    10000, // 10 second timeout for Yahoo FC
+  );
 
   const cookieHeader = getSetCookieHeader(fcResponse);
 
@@ -66,20 +72,24 @@ const fetchYahooSession = async (): Promise<YahooSession> => {
     );
   }
 
-  const crumbResponse = await fetch(YAHOO_CRUMB_URL, {
-    headers: {
-      'User-Agent': DEFAULT_USER_AGENT,
-      Accept: 'application/json, text/plain, */*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept-Encoding': 'gzip, deflate, br, zstd',
-      Referer: 'https://finance.yahoo.com/',
-      'Sec-Fetch-Dest': 'empty',
-      'Sec-Fetch-Mode': 'cors',
-      'Sec-Fetch-Site': 'same-site',
-      Cookie: cookieHeader,
-      Connection: 'keep-alive',
+  const crumbResponse = await fetchWithTimeout(
+    YAHOO_CRUMB_URL,
+    {
+      headers: {
+        'User-Agent': DEFAULT_USER_AGENT,
+        Accept: 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
+        Referer: 'https://finance.yahoo.com/',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-site',
+        Cookie: cookieHeader,
+        Connection: 'keep-alive',
+      },
     },
-  });
+    10000, // 10 second timeout for Yahoo crumb
+  );
 
   if (!crumbResponse.ok) {
     throw new Error(

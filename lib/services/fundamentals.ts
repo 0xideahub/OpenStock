@@ -1,4 +1,5 @@
 import { fetchYahooFundamentals } from '../yahoo/fundamentals';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
 type DataSource = 'tiingo' | 'yahoo';
 
@@ -97,11 +98,15 @@ const fetchTiingoJSON = async <T>(path: string): Promise<T> => {
   }
 
   const url = `${TIINGO_BASE_URL}${path}${path.includes('?') ? '&' : '?'}token=${TIINGO_API_KEY}`;
-  const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
+  const response = await fetchWithTimeout(
+    url,
+    {
+      headers: {
+        'Content-Type': 'application/json',
+      },
     },
-  });
+    10000, // 10 second timeout for Tiingo API
+  );
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');

@@ -1,4 +1,5 @@
 import { getYahooSession, invalidateYahooSession } from './session';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
 const YAHOO_QUOTE_SUMMARY_BASE =
   'https://query2.finance.yahoo.com/v10/finance/quoteSummary/';
@@ -212,21 +213,25 @@ const performQuoteSummaryRequest = async (
 ): Promise<YahooFundamentals> => {
   const session = await getYahooSession({ forceRefresh: forceRefreshSession });
 
-  const response = await fetch(buildQuoteSummaryUrl(symbol, session.crumb), {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-      Accept: 'application/json, text/plain, */*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept-Encoding': 'gzip, deflate, br, zstd',
-      Referer: 'https://finance.yahoo.com/',
-      'Sec-Fetch-Dest': 'empty',
-      'Sec-Fetch-Mode': 'cors',
-      'Sec-Fetch-Site': 'same-site',
-      Connection: 'keep-alive',
-      Cookie: session.cookieHeader,
+  const response = await fetchWithTimeout(
+    buildQuoteSummaryUrl(symbol, session.crumb),
+    {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        Accept: 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
+        Referer: 'https://finance.yahoo.com/',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-site',
+        Connection: 'keep-alive',
+        Cookie: session.cookieHeader,
+      },
     },
-  });
+    15000, // 15 second timeout for Yahoo quote summary
+  );
 
   const bodyText = await response.text();
 
