@@ -1,5 +1,11 @@
-const config = {
-  plugins: ["@tailwindcss/postcss"],
-};
+import tailwindcss from '@tailwindcss/postcss';
 
-export default config;
+const plugins = [];
+
+if (!process.env.VITEST) {
+  plugins.push(tailwindcss());
+}
+
+export default {
+  plugins,
+};
