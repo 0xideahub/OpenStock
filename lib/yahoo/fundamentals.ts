@@ -12,6 +12,10 @@ const REQUESTED_MODULES = [
   'defaultKeyStatistics',
   'summaryDetail',
   'price',
+  'incomeStatementHistory',
+  'incomeStatementHistoryQuarterly',
+  'balanceSheetHistory',
+  'cashflowStatementHistory',
 ] as const;
 
 type QuoteSummaryModules = (typeof REQUESTED_MODULES)[number];
@@ -52,6 +56,13 @@ export interface YahooFundamentalsMetrics {
   returnOnEquity?: number;
   returnOnAssets?: number;
   earningsGrowth?: number;
+  roeActual?: number;
+  revenueCagr3Y?: number;
+  earningsCagr3Y?: number;
+  debtToEquityActual?: number;
+  freeCashflowPayoutRatio?: number;
+  revenueGrowthHistory?: Array<{ period: string; value: number }>;
+  earningsGrowthHistory?: Array<{ period: string; value: number }>;
 }
 
 export interface YahooFundamentals {
@@ -100,6 +111,183 @@ const percentFrom = (value: any): number | undefined => {
   return num;
 };
 
+type StatementEntry = {
+  endDate?: number;
+  periodLabel?: string;
+  totalRevenue?: number;
+  netIncome?: number;
+  dividendsPaid?: number;
+  freeCashFlow?: number;
+  totalStockholderEquity?: number;
+  totalLiabilities?: number;
+};
+
+const toPeriodLabel = (timestamp?: number): string | undefined => {
+  if (!Number.isFinite(timestamp)) {
+    return undefined;
+  }
+  const date = new Date(timestamp * 1000);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const extractStatementEntries = (
+  rawEntries: any[] | undefined,
+  pick: (entry: any) => Partial<StatementEntry>,
+): StatementEntry[] => {
+  if (!Array.isArray(rawEntries)) {
+    return [];
+  }
+  return rawEntries
+    .map((entry) => {
+      const endDate = numberFrom(entry?.endDate?.raw ?? entry?.endDate);
+      return {
+        endDate,
+        periodLabel: toPeriodLabel(endDate),
+        ...pick(entry),
+      };
+    })
+    .filter((entry) => entry.endDate !== undefined)
+    .sort((a, b) => (b.endDate ?? 0) - (a.endDate ?? 0));
+};
+
+const cagr = (latest: number, oldest: number, years: number): number | undefined => {
+  if (!Number.isFinite(latest) || !Number.isFinite(oldest) || latest <= 0 || oldest <= 0) {
+    return undefined;
+  }
+  const span = Math.max(1, years);
+  return Math.pow(latest / oldest, 1 / span) - 1;
+};
+
+const selectOlderEntry = (entries: StatementEntry[], periods: number): StatementEntry | undefined => {
+  if (entries.length <= 1) {
+    return undefined;
+  }
+  const index = Math.min(entries.length - 1, periods);
+  return entries[index];
+};
+
+const computeStatementDerivedMetrics = (
+  result: Record<string, any>,
+): Partial<YahooFundamentalsMetrics> => {
+  const incomeHistory = extractStatementEntries(
+    result.incomeStatementHistory?.incomeStatementHistory,
+    (entry) => ({
+      totalRevenue: numberFrom(entry?.totalRevenue),
+      netIncome: numberFrom(entry?.netIncome),
+    }),
+  );
+
+  const balanceHistory = extractStatementEntries(
+    result.balanceSheetHistory?.balanceSheetStatements,
+    (entry) => ({
+      totalStockholderEquity: numberFrom(entry?.totalStockholderEquity),
+      totalLiabilities: numberFrom(entry?.totalLiab ?? entry?.totalLiabilities),
+    }),
+  );
+
+  const cashflowHistory = extractStatementEntries(
+    result.cashflowStatementHistory?.cashflowStatements,
+    (entry) => ({
+      freeCashFlow: numberFrom(entry?.freeCashFlow),
+      dividendsPaid: numberFrom(entry?.dividendsPaid),
+    }),
+  );
+
+  const latestIncome = incomeHistory[0];
+  const olderIncome = selectOlderEntry(incomeHistory, 3);
+  const revenueCagr = latestIncome && olderIncome
+    ? cagr(
+        latestIncome.totalRevenue ?? NaN,
+        olderIncome.totalRevenue ?? NaN,
+        Math.max(1, (latestIncome.endDate ?? 0) - (olderIncome.endDate ?? 0)) / (365 * 24 * 60 * 60),
+      )
+    : undefined;
+
+  const earningsCagr = latestIncome && olderIncome
+    ? cagr(
+        Math.abs(latestIncome.netIncome ?? NaN),
+        Math.abs(olderIncome.netIncome ?? NaN),
+        Math.max(1, (latestIncome.endDate ?? 0) - (olderIncome.endDate ?? 0)) / (365 * 24 * 60 * 60),
+      )
+    : undefined;
+
+  const latestBalance = balanceHistory[0];
+  const previousBalance = balanceHistory[1];
+  const averageEquity =
+    latestBalance?.totalStockholderEquity && previousBalance?.totalStockholderEquity
+      ? (latestBalance.totalStockholderEquity + previousBalance.totalStockholderEquity) / 2
+      : latestBalance?.totalStockholderEquity;
+
+  const roeActual =
+    latestIncome?.netIncome && Number.isFinite(averageEquity) && averageEquity && averageEquity !== 0
+      ? latestIncome.netIncome / averageEquity
+      : undefined;
+
+  const debtToEquityActual =
+    latestBalance?.totalLiabilities && latestBalance?.totalStockholderEquity
+      ? latestBalance.totalLiabilities / latestBalance.totalStockholderEquity
+      : undefined;
+
+  const latestCashflow = cashflowHistory[0];
+  const freeCashflowPayoutRatio =
+    latestCashflow?.freeCashFlow && latestCashflow.freeCashFlow > 0 && latestCashflow?.dividendsPaid
+      ? Math.abs(latestCashflow.dividendsPaid) / latestCashflow.freeCashFlow
+      : undefined;
+
+  const revenueGrowthHistory =
+    incomeHistory.length >= 2
+      ? incomeHistory.slice(0, 4).map((entry, index, arr) => {
+          const next = arr[index + 1];
+          if (!next?.totalRevenue || !entry.totalRevenue || entry.totalRevenue <= 0) {
+            return {
+              period: entry.periodLabel ?? `period-${index}`,
+              value: NaN,
+            };
+          }
+          const growth = next ? entry.totalRevenue / next.totalRevenue - 1 : NaN;
+          return {
+            period: entry.periodLabel ?? `period-${index}`,
+            value: growth,
+          };
+        })
+      : undefined;
+
+  const earningsGrowthHistory =
+    incomeHistory.length >= 2
+      ? incomeHistory.slice(0, 4).map((entry, index, arr) => {
+          const next = arr[index + 1];
+          if (!next?.netIncome || !entry.netIncome || entry.netIncome === 0) {
+            return {
+              period: entry.periodLabel ?? `period-${index}`,
+              value: NaN,
+            };
+          }
+          const growth = next ? entry.netIncome / next.netIncome - 1 : NaN;
+          return {
+            period: entry.periodLabel ?? `period-${index}`,
+            value: growth,
+          };
+        })
+      : undefined;
+
+  return {
+    roeActual,
+    revenueCagr3Y: revenueCagr,
+    earningsCagr3Y: earningsCagr,
+    debtToEquityActual,
+    freeCashflowPayoutRatio,
+    revenueGrowthHistory:
+      revenueGrowthHistory?.filter((entry) => Number.isFinite(entry.value)) ?? undefined,
+    earningsGrowthHistory:
+      earningsGrowthHistory?.filter((entry) => Number.isFinite(entry.value)) ?? undefined,
+  };
+};
+
+export const __testables = {
+  extractStatementEntries,
+  computeStatementDerivedMetrics,
+};
+
 const buildQuoteSummaryUrl = (symbol: string, crumb: string): string => {
   const url = new URL(`${YAHOO_QUOTE_SUMMARY_BASE}${encodeURIComponent(symbol)}`);
   url.searchParams.set('modules', REQUESTED_MODULES.join(','));
@@ -121,6 +309,7 @@ const parseQuoteSummary = (
   const financialData = result.financialData ?? {};
   const summaryDetail = result.summaryDetail ?? {};
   const keyStatistics = result.defaultKeyStatistics ?? {};
+  const statementMetrics = computeStatementDerivedMetrics(result);
 
   const currentPrice =
     numberFrom(price.regularMarketPrice) ??
@@ -179,6 +368,13 @@ const parseQuoteSummary = (
     returnOnEquity: percentFrom(financialData.returnOnEquity),
     returnOnAssets: percentFrom(financialData.returnOnAssets),
     earningsGrowth: percentFrom(financialData.earningsGrowth),
+    roeActual: statementMetrics.roeActual,
+    revenueCagr3Y: statementMetrics.revenueCagr3Y,
+    earningsCagr3Y: statementMetrics.earningsCagr3Y,
+    debtToEquityActual: statementMetrics.debtToEquityActual,
+    freeCashflowPayoutRatio: statementMetrics.freeCashflowPayoutRatio,
+    revenueGrowthHistory: statementMetrics.revenueGrowthHistory,
+    earningsGrowthHistory: statementMetrics.earningsGrowthHistory,
   };
 
   return {

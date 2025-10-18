@@ -38,6 +38,13 @@ export interface FundamentalMetrics {
   returnOnEquity?: number;
   returnOnAssets?: number;
   earningsGrowth?: number;
+  roeActual?: number;
+  revenueCagr3Y?: number;
+  earningsCagr3Y?: number;
+  debtToEquityActual?: number;
+  freeCashflowPayoutRatio?: number;
+  revenueGrowthHistory?: Array<{ period: string; value: number }>;
+  earningsGrowthHistory?: Array<{ period: string; value: number }>;
 }
 
 const TIINGO_API_KEY = process.env.TIINGO_API_KEY;
@@ -263,6 +270,13 @@ const mergeSupplementalMetrics = (
     'payoutRatio',
     'forwardPE',
     'earningsGrowth',
+    'roeActual',
+    'revenueCagr3Y',
+    'earningsCagr3Y',
+    'debtToEquityActual',
+    'freeCashflowPayoutRatio',
+    'revenueGrowthHistory',
+    'earningsGrowthHistory',
   ];
 
   for (const key of keysToSupplement) {
@@ -344,6 +358,13 @@ const normalizeYahooResult = (
     returnOnEquity: yahoo.metrics.returnOnEquity,
     returnOnAssets: yahoo.metrics.returnOnAssets,
     earningsGrowth: yahoo.metrics.earningsGrowth,
+    roeActual: yahoo.metrics.roeActual,
+    revenueCagr3Y: yahoo.metrics.revenueCagr3Y,
+    earningsCagr3Y: yahoo.metrics.earningsCagr3Y,
+    debtToEquityActual: yahoo.metrics.debtToEquityActual,
+    freeCashflowPayoutRatio: yahoo.metrics.freeCashflowPayoutRatio,
+    revenueGrowthHistory: yahoo.metrics.revenueGrowthHistory,
+    earningsGrowthHistory: yahoo.metrics.earningsGrowthHistory,
   },
 });
 

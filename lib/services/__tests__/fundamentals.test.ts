@@ -70,6 +70,11 @@ describe('fetchFundamentalsWithFallback', () => {
         trailingPE: 21,
         dividendYield: 0.018,
         payoutRatio: 0.4,
+        roeActual: 0.22,
+        revenueCagr3Y: 0.12,
+        earningsCagr3Y: 0.15,
+        debtToEquityActual: 0.6,
+        freeCashflowPayoutRatio: 0.35,
       },
     };
 
@@ -91,6 +96,9 @@ describe('fetchFundamentalsWithFallback', () => {
     expect(result.symbol).toBe('AAPL');
     expect(result.metrics.trailingPE).toBe(20);
     expect(result.metrics.dividendYield).toBeCloseTo(0.02);
+    expect(result.metrics.payoutRatio).toBeCloseTo(0.4);
+    expect(result.metrics.revenueCagr3Y).toBeCloseTo(0.12);
+    expect(result.metrics.roeActual).toBeCloseTo(0.22);
     expect(result.metrics.payoutRatio).toBeCloseTo(0.4);
   });
 
@@ -170,6 +178,7 @@ describe('fetchFundamentalsWithFallback', () => {
         changePercent: 0.5,
         trailingPE: 15,
         dividendYield: 0.03,
+        revenueCagr3Y: 0.08,
       },
     };
 
@@ -185,5 +194,6 @@ describe('fetchFundamentalsWithFallback', () => {
     expect(result.symbol).toBe('DENN');
     expect(result.metrics.trailingPE).toBe(15);
     expect(result.metrics.dividendYield).toBe(0.03);
+    expect(result.metrics.revenueCagr3Y).toBeCloseTo(0.08);
   });
 });
