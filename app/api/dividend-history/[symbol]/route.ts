@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ratelimit } from '@/lib/ratelimit';
+import {
+  fetchYahooDividendHistory,
+  YahooDividendNotFoundError,
+} from '@/lib/yahoo/dividends';
 
 const TIINGO_API_KEY = process.env.TIINGO_API_KEY;
 const TIINGO_BASE_URL = 'https://api.tiingo.com';
@@ -74,7 +78,26 @@ export async function GET(
     }
   }
 
-  // Calculate start date (2 years ago)
+  try {
+    const yahooResult = await fetchYahooDividendHistory(symbol);
+
+    return NextResponse.json(yahooResult, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400',
+        'X-RateLimit-Limit': rateLimitResult.limit.toString(),
+        'X-RateLimit-Remaining': rateLimitResult.remaining.toString(),
+        'X-RateLimit-Reset': rateLimitResult.reset.toString(),
+      },
+    });
+  } catch (error: any) {
+    if (error instanceof YahooDividendNotFoundError) {
+      return NextResponse.json({ error: 'Dividend history not available' }, { status: 404 });
+    }
+
+    console.warn(`[dividend-history] Yahoo fetch failed for ${symbol}, falling back to Tiingo:`, error);
+  }
+
+  // Calculate start date (2 years ago) for Tiingo fallback
   const endDate = new Date();
   const startDate = new Date();
   startDate.setFullYear(endDate.getFullYear() - 2);
