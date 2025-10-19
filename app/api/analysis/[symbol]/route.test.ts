@@ -59,13 +59,13 @@ describe('POST /api/analysis/[symbol]', () => {
     const { POST } = await import('./route');
 
     const response = await POST(
-      buildRequest('AAPL', { investorType: 'value' }, 'secret'),
+      buildRequest('AAPL', { investorType: 'balanced' }, 'secret'),
       buildContext('AAPL'),
     );
 
     expect(response.status).toBe(501);
     await expect(response.json()).resolves.toEqual({
-      error: 'Analysis for investor type "value" is not available yet.',
+      error: 'Analysis for investor type "balanced" is not available yet.',
     });
     expect(generateAnalysisMock).not.toHaveBeenCalled();
   });
@@ -117,6 +117,118 @@ describe('POST /api/analysis/[symbol]', () => {
         symbol: 'AAPL',
         investorType: 'growth',
         analysis: 'Sample analysis',
+        cached: false,
+        source: 'openai',
+        fetchedAt: now,
+        model: 'gpt-4o-mini',
+        recommendation: 'buy',
+      },
+    });
+  });
+
+  it('returns analysis for value investor type', async () => {
+    const { POST } = await import('./route');
+    const now = new Date().toISOString();
+
+    generateAnalysisMock.mockResolvedValue({
+      symbol: 'BRK.B',
+      investorType: 'value',
+      analysis: 'Value analysis',
+      cached: false,
+      source: 'openai',
+      fetchedAt: now,
+      model: 'gpt-4o-mini',
+      recommendation: 'hold',
+    });
+
+    const response = await POST(
+      buildRequest(
+        'BRK.B',
+        {
+          investorType: 'value',
+          companyName: 'Berkshire Hathaway',
+          recommendation: 'hold',
+          metrics: { pe: 14, pb: 1.2, roe: 18, debtToEquity: 0.3 },
+          reasons: ['Solid balance sheet'],
+          warnings: ['Watch valuation premium'],
+        },
+        'secret',
+      ),
+      buildContext('BRK.B'),
+    );
+
+    expect(generateAnalysisMock).toHaveBeenCalledWith({
+      symbol: 'BRK.B',
+      investorType: 'value',
+      companyName: 'Berkshire Hathaway',
+      recommendation: 'hold',
+      metrics: { pe: 14, pb: 1.2, roe: 18, debtToEquity: 0.3 },
+      reasons: ['Solid balance sheet'],
+      warnings: ['Watch valuation premium'],
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      data: {
+        symbol: 'BRK.B',
+        investorType: 'value',
+        analysis: 'Value analysis',
+        cached: false,
+        source: 'openai',
+        fetchedAt: now,
+        model: 'gpt-4o-mini',
+        recommendation: 'hold',
+      },
+    });
+  });
+
+  it('returns analysis for income investor type', async () => {
+    const { POST } = await import('./route');
+    const now = new Date().toISOString();
+
+    generateAnalysisMock.mockResolvedValue({
+      symbol: 'T',
+      investorType: 'income',
+      analysis: 'Income analysis',
+      cached: false,
+      source: 'openai',
+      fetchedAt: now,
+      model: 'gpt-4o-mini',
+      recommendation: 'buy',
+    });
+
+    const response = await POST(
+      buildRequest(
+        'T',
+        {
+          investorType: 'income',
+          companyName: 'AT&T Inc.',
+          recommendation: 'buy',
+          metrics: { dividendYield: 0.065, payoutRatio: 0.55, debtToEquity: 1.1 },
+          reasons: ['Attractive yield with improving coverage'],
+          warnings: ['Monitor leverage profile'],
+        },
+        'secret',
+      ),
+      buildContext('T'),
+    );
+
+    expect(generateAnalysisMock).toHaveBeenCalledWith({
+      symbol: 'T',
+      investorType: 'income',
+      companyName: 'AT&T Inc.',
+      recommendation: 'buy',
+      metrics: { dividendYield: 0.065, payoutRatio: 0.55, debtToEquity: 1.1 },
+      reasons: ['Attractive yield with improving coverage'],
+      warnings: ['Monitor leverage profile'],
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      data: {
+        symbol: 'T',
+        investorType: 'income',
+        analysis: 'Income analysis',
         cached: false,
         source: 'openai',
         fetchedAt: now,

@@ -13,16 +13,22 @@ interface AnalysisRequestBody {
     pe?: number;
     pb?: number;
     roe?: number;
+    roeActual?: number | null;
     growth?: number;
     debtToEquity?: number;
     revenueCagr3Y?: number | null;
     earningsCagr3Y?: number | null;
+    dividendYield?: number | null;
+    payoutRatio?: number | null;
+    freeCashflowPayoutRatio?: number | null;
+    currentRatio?: number | null;
+    quickRatio?: number | null;
   };
   reasons?: string[];
   warnings?: string[];
 }
 
-const SUPPORTED_INVESTOR_TYPES: InvestorType[] = ['growth'];
+const SUPPORTED_INVESTOR_TYPES: InvestorType[] = ['growth', 'value', 'income'];
 
 export async function POST(
   request: Request,

@@ -1,9 +1,12 @@
 import { FetchTimeoutError, fetchWithTimeout } from '../utils/fetchWithTimeout';
 import { getCached, setCached } from '../cache';
-import { GROWTH_ANALYST_PROMPT } from './prompts';
+import {
+  GROWTH_ANALYST_PROMPT,
+  VALUE_ANALYST_PROMPT,
+  INCOME_ANALYST_PROMPT,
+} from './prompts';
 
 type InvestorType = 'growth' | 'value' | 'income';
-
 type Recommendation = 'buy' | 'hold' | 'pass';
 
 export interface AnalysisPayload {
@@ -15,10 +18,16 @@ export interface AnalysisPayload {
     pe?: number;
     pb?: number;
     roe?: number;
+    roeActual?: number | null;
     growth?: number;
-    debtToEquity?: number;
     revenueCagr3Y?: number | null;
     earningsCagr3Y?: number | null;
+    debtToEquity?: number;
+    dividendYield?: number | null;
+    payoutRatio?: number | null;
+    freeCashflowPayoutRatio?: number | null;
+    currentRatio?: number | null;
+    quickRatio?: number | null;
   };
   reasons: string[];
   warnings: string[];
@@ -40,85 +49,119 @@ const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
 const REQUEST_TIMEOUT_MS = 15000;
 const CACHE_TTL_SECONDS = 6 * 60 * 60; // 6 hours
 
-const formatNumber = (value?: number | null, suffix = ''): string | undefined => {
+const formatNumber = (value?: number | null, suffix = '', digits = 2): string | undefined => {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return undefined;
   }
-  return `${value.toFixed(suffix === '%' ? 1 : 2)}${suffix}`;
+  const precision = suffix === '%' ? 1 : digits;
+  return `${value.toFixed(precision)}${suffix}`;
 };
 
-const buildGrowthUserPrompt = (payload: AnalysisPayload): string => {
-  const { symbol, companyName, metrics, reasons, warnings } = payload;
+const formatPercentFromRatio = (value?: number | null, digits = 1): string | undefined => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return `${(value * 100).toFixed(digits)}%`;
+};
+
+const sanitizeAnalysisText = (text: string): string => {
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => !/^recommendation\s*:/i.test(line));
+  return lines.join('\n');
+};
+
+const appendMetricLines = (
+  lines: string[],
+  header: string,
+  entries: Array<[string, string | undefined]>,
+) => {
+  const filtered = entries.filter(([, value]) => value !== undefined) as Array<[string, string]>;
+  if (filtered.length === 0) {
+    return;
+  }
+  lines.push(`${header}:`);
+  filtered.forEach(([label, value]) => lines.push(`- ${label}: ${value}`));
+};
+
+const buildUserPrompt = (payload: AnalysisPayload): string => {
+  const { symbol, companyName, investorType, recommendation, metrics, reasons, warnings } = payload;
   const lines: string[] = [];
 
   lines.push(`Ticker: ${symbol}`);
   if (companyName) {
     lines.push(`Company: ${companyName}`);
   }
+  lines.push(`Valuation signal: ${recommendation.toUpperCase()}`);
 
-  const metricEntries = [
-    ['P/E', formatNumber(metrics.pe)],
-    ['P/B', formatNumber(metrics.pb)],
-    ['ROE', formatNumber(metrics.roe, '%')],
-    ['Growth Rate', formatNumber(metrics.growth, '%')],
-    ['Revenue CAGR (3Y)', formatNumber(metrics.revenueCagr3Y, '%')],
-    ['Earnings CAGR (3Y)', formatNumber(metrics.earningsCagr3Y, '%')],
-    ['Debt-to-Equity', formatNumber(metrics.debtToEquity)],
-  ].filter(([, value]) => value !== undefined) as Array<[string, string]>;
-
-  if (metricEntries.length > 0) {
-    lines.push('Key Metrics:');
-    metricEntries.forEach(([label, value]) => {
-      lines.push(`- ${label}: ${value}`);
-    });
+  switch (investorType) {
+    case 'growth': {
+      appendMetricLines(lines, 'Growth metrics', [
+        ['P/E', formatNumber(metrics.pe)],
+        ['P/B', formatNumber(metrics.pb)],
+        ['ROE', formatNumber(metrics.roe ?? metrics.roeActual ?? undefined, '%')],
+        ['Revenue growth rate', formatNumber(metrics.growth, '%')],
+        ['Revenue CAGR (3Y)', formatNumber(metrics.revenueCagr3Y, '%')],
+        ['Earnings CAGR (3Y)', formatNumber(metrics.earningsCagr3Y, '%')],
+        ['Debt-to-Equity', formatNumber(metrics.debtToEquity)],
+      ]);
+      break;
+    }
+    case 'value': {
+      appendMetricLines(lines, 'Valuation metrics', [
+        ['P/E', formatNumber(metrics.pe)],
+        ['P/B', formatNumber(metrics.pb)],
+        ['ROE', formatNumber(metrics.roe ?? metrics.roeActual ?? undefined, '%')],
+        ['Revenue CAGR (3Y)', formatNumber(metrics.revenueCagr3Y, '%')],
+        ['Earnings CAGR (3Y)', formatNumber(metrics.earningsCagr3Y, '%')],
+        ['Debt-to-Equity', formatNumber(metrics.debtToEquity)],
+        ['Current ratio', formatNumber(metrics.currentRatio, '', 2)],
+        ['Quick ratio', formatNumber(metrics.quickRatio, '', 2)],
+      ]);
+      break;
+    }
+    case 'income': {
+      appendMetricLines(lines, 'Income metrics', [
+        ['Dividend yield', formatPercentFromRatio(metrics.dividendYield)],
+        ['Payout ratio', formatPercentFromRatio(metrics.payoutRatio)],
+        ['FCF payout ratio', formatPercentFromRatio(metrics.freeCashflowPayoutRatio)],
+        ['Revenue CAGR (3Y)', formatNumber(metrics.revenueCagr3Y, '%')],
+        ['Earnings CAGR (3Y)', formatNumber(metrics.earningsCagr3Y, '%')],
+        ['Debt-to-Equity', formatNumber(metrics.debtToEquity)],
+      ]);
+      break;
+    }
   }
 
   if (reasons.length > 0) {
-    lines.push('Bullish Factors:');
-    reasons.slice(0, 3).forEach((reason) => lines.push(`- ${reason}`));
+    lines.push('Key positives:');
+    reasons.slice(0, 3).forEach((reasonLine) => lines.push(`- ${reasonLine}`));
   }
 
   if (warnings.length > 0) {
-    lines.push('Risks / Watchouts:');
-    warnings.slice(0, 3).forEach((warning) => lines.push(`- ${warning}`));
+    lines.push('Risks to monitor:');
+    warnings.slice(0, 3).forEach((warningLine) => lines.push(`- ${warningLine}`));
   }
 
   lines.push(
-    'Using only the information provided, craft the analysis per the system instructions. Avoid inventing data and never hedge on the recommendation.'
+    'Using only the information provided, craft the analysis per the system instructions. Avoid inventing data and do not restate the recommendation line.',
   );
 
   return lines.join('\n');
-};
-
-const sanitizeAnalysisText = (text: string): string => {
-  const lines = text
-    .split('\n')
-    .map((line) => line.trimEnd())
-    .filter((line) => line.length > 0);
-  const filtered = lines.filter(
-    (line) => !/^recommendation\s*:/i.test(line),
-  );
-  return filtered.join('\n');
 };
 
 const buildGrowthFallbackAnalysis = (
   payload: AnalysisPayload,
   failureReason?: string,
 ): string => {
-  const {
-    symbol,
-    companyName,
-    metrics,
-    reasons,
-    warnings,
-    recommendation,
-  } = payload;
-
+  const { symbol, companyName, metrics, reasons, warnings, recommendation } = payload;
   const name = companyName || symbol;
   const growthRate =
     formatNumber(metrics.revenueCagr3Y, '%') ??
     formatNumber(metrics.growth, '%');
-  const roe = formatNumber(metrics.roe, '%');
+  const roe = formatNumber(metrics.roe ?? metrics.roeActual ?? undefined, '%');
   const peg =
     metrics.pe && metrics.growth && metrics.growth > 0
       ? (metrics.pe / metrics.growth).toFixed(2)
@@ -144,8 +187,8 @@ const buildGrowthFallbackAnalysis = (
       : `${name} growth profile: review the key metrics above.`;
 
   const bulletLines: string[] = [];
-  reasons.slice(0, 2).forEach((reason) => bulletLines.push(`• ${reason}`));
-  warnings.slice(0, 2).forEach((warning) => bulletLines.push(`• ⚠ ${warning}`));
+  reasons.slice(0, 2).forEach((reasonLine) => bulletLines.push(`• ${reasonLine}`));
+  warnings.slice(0, 2).forEach((warningLine) => bulletLines.push(`• ⚠ ${warningLine}`));
 
   if (bulletLines.length === 0) {
     if (growthRate) bulletLines.push(`• Growth rate trending at ${growthRate}`);
@@ -160,10 +203,127 @@ const buildGrowthFallbackAnalysis = (
     .trim();
 };
 
+const buildValueFallbackAnalysis = (
+  payload: AnalysisPayload,
+  failureReason?: string,
+): string => {
+  const { symbol, companyName, metrics, reasons, warnings, recommendation } = payload;
+  const name = companyName || symbol;
+  const pe = formatNumber(metrics.pe);
+  const pb = formatNumber(metrics.pb);
+  const roe = formatNumber(metrics.roe ?? metrics.roeActual ?? undefined, '%');
+  const debtToEquity = formatNumber(metrics.debtToEquity);
+  const revenueCagr = formatNumber(metrics.revenueCagr3Y, '%');
+
+  const outlookPhrase =
+    recommendation === 'buy'
+      ? 'looks undervalued against fundamentals'
+      : recommendation === 'hold'
+        ? 'appears fairly priced pending catalysts'
+        : 'offers limited margin of safety at current levels';
+
+  const summaryParts: string[] = [`Outlook ${outlookPhrase}`];
+  if (pe) summaryParts.push(`P/E ${pe}`);
+  if (pb) summaryParts.push(`P/B ${pb}`);
+  if (roe) summaryParts.push(`ROE ${roe}`);
+  if (debtToEquity) summaryParts.push(`debt/equity ${debtToEquity}`);
+  if (revenueCagr) summaryParts.push(`revenue CAGR ${revenueCagr}`);
+
+  const summary =
+    summaryParts.length > 0
+      ? `${name} value profile: ${summaryParts.join(', ')}.`
+      : `${name} value profile: review the balance sheet and valuation metrics above.`;
+
+  const bulletLines: string[] = [];
+  reasons.slice(0, 2).forEach((line) => bulletLines.push(`• ${line}`));
+  warnings.slice(0, 2).forEach((line) => bulletLines.push(`• ⚠ ${line}`));
+
+  if (bulletLines.length === 0) {
+    if (pe) bulletLines.push(`• Valuation currently at P/E ${pe}`);
+    if (debtToEquity) bulletLines.push(`• Leverage runs at ${debtToEquity} debt/equity`);
+  }
+
+  const fallbackLine = failureReason ? `*(Fallback reason: ${failureReason})*` : undefined;
+
+  return [summary, ...bulletLines, fallbackLine]
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+};
+
+const buildIncomeFallbackAnalysis = (
+  payload: AnalysisPayload,
+  failureReason?: string,
+): string => {
+  const { symbol, companyName, metrics, reasons, warnings, recommendation } = payload;
+  const name = companyName || symbol;
+  const dividendYield = formatPercentFromRatio(metrics.dividendYield);
+  const payoutRatio = formatPercentFromRatio(metrics.payoutRatio);
+  const fcfPayout = formatPercentFromRatio(metrics.freeCashflowPayoutRatio);
+  const debtToEquity = formatNumber(metrics.debtToEquity);
+  const earningsCagr = formatNumber(metrics.earningsCagr3Y, '%');
+
+  const outlookPhrase =
+    recommendation === 'buy'
+      ? 'supports a BUY for dependable income'
+      : recommendation === 'hold'
+        ? 'suggests HOLD while monitoring payout coverage'
+        : 'leans toward PASS until coverage metrics improve';
+
+  const summaryParts: string[] = [`Outlook ${outlookPhrase}`];
+  if (dividendYield) summaryParts.push(`yield ${dividendYield}`);
+  if (payoutRatio) summaryParts.push(`payout ${payoutRatio}`);
+  if (fcfPayout) summaryParts.push(`FCF payout ${fcfPayout}`);
+  if (debtToEquity) summaryParts.push(`debt/equity ${debtToEquity}`);
+  if (earningsCagr) summaryParts.push(`earnings CAGR ${earningsCagr}`);
+
+  const summary =
+    summaryParts.length > 0
+      ? `${name} income profile: ${summaryParts.join(', ')}.`
+      : `${name} income profile: review dividend coverage metrics above.`;
+
+  const bulletLines: string[] = [];
+  reasons.slice(0, 2).forEach((line) => bulletLines.push(`• ${line}`));
+  warnings.slice(0, 2).forEach((line) => bulletLines.push(`• ⚠ ${line}`));
+
+  if (bulletLines.length === 0) {
+    if (dividendYield) bulletLines.push(`• Dividend yield currently ${dividendYield}`);
+    if (payoutRatio) bulletLines.push(`• Earnings payout ratio around ${payoutRatio}`);
+  }
+
+  const fallbackLine = failureReason ? `*(Fallback reason: ${failureReason})*` : undefined;
+
+  return [summary, ...bulletLines, fallbackLine]
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+};
+
+const buildFallbackAnalysis = (payload: AnalysisPayload, failureReason?: string): string => {
+  const raw = (() => {
+    switch (payload.investorType) {
+      case 'growth':
+        return buildGrowthFallbackAnalysis(payload, failureReason);
+      case 'value':
+        return buildValueFallbackAnalysis(payload, failureReason);
+      case 'income':
+        return buildIncomeFallbackAnalysis(payload, failureReason);
+      default:
+        return 'Analysis temporarily unavailable. Review the fundamentals above for key insights.';
+    }
+  })();
+
+  return sanitizeAnalysisText(raw);
+};
+
 const getPromptForInvestorType = (investorType: InvestorType) => {
   switch (investorType) {
     case 'growth':
       return GROWTH_ANALYST_PROMPT;
+    case 'value':
+      return VALUE_ANALYST_PROMPT;
+    case 'income':
+      return INCOME_ANALYST_PROMPT;
     default:
       throw new Error(`Unsupported investor type for analysis: ${investorType}`);
   }
@@ -173,7 +333,7 @@ const buildCacheKey = (payload: AnalysisPayload) =>
   `analysis:${payload.investorType}:${payload.symbol.toUpperCase()}`;
 
 export async function generateAnalysis(
-  payload: AnalysisPayload
+  payload: AnalysisPayload,
 ): Promise<AnalysisResult> {
   const cacheKey = buildCacheKey(payload);
   const cached = await getCached<AnalysisResult>(cacheKey);
@@ -183,12 +343,11 @@ export async function generateAnalysis(
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
+    const analysis = buildFallbackAnalysis(payload, 'OpenAI API key not configured');
     return {
       symbol: payload.symbol.toUpperCase(),
       investorType: payload.investorType,
-      analysis: sanitizeAnalysisText(
-        buildGrowthFallbackAnalysis(payload, 'OpenAI API key not configured'),
-      ),
+      analysis,
       cached: false,
       source: 'fallback',
       fetchedAt: new Date().toISOString(),
@@ -197,7 +356,7 @@ export async function generateAnalysis(
   }
 
   const systemPrompt = getPromptForInvestorType(payload.investorType);
-  const userPrompt = buildGrowthUserPrompt(payload);
+  const userPrompt = buildUserPrompt(payload);
 
   try {
     const response = await fetchWithTimeout(
@@ -218,13 +377,13 @@ export async function generateAnalysis(
           ],
         }),
       },
-      REQUEST_TIMEOUT_MS
+      REQUEST_TIMEOUT_MS,
     );
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => response.statusText);
       throw new Error(
-        `OpenAI request failed (${response.status} ${response.statusText}) ${errorText}`.trim()
+        `OpenAI request failed (${response.status} ${response.statusText}) ${errorText}`.trim(),
       );
     }
 
@@ -232,7 +391,7 @@ export async function generateAnalysis(
     const rawContent =
       data?.choices?.[0]?.message?.content?.trim() ||
       data?.choices?.[0]?.text?.trim() ||
-      buildGrowthFallbackAnalysis(payload, 'OpenAI response empty');
+      buildFallbackAnalysis(payload, 'OpenAI response empty');
     const content = sanitizeAnalysisText(rawContent);
 
     const result: AnalysisResult = {
@@ -259,10 +418,12 @@ export async function generateAnalysis(
 
     console.error('[ai] Failed to generate analysis:', reason);
 
+    const analysis = buildFallbackAnalysis(payload, reason);
+
     return {
       symbol: payload.symbol.toUpperCase(),
       investorType: payload.investorType,
-      analysis: sanitizeAnalysisText(buildGrowthFallbackAnalysis(payload, reason)),
+      analysis,
       cached: false,
       source: 'fallback',
       fetchedAt: new Date().toISOString(),
