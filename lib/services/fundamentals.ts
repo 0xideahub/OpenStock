@@ -6,6 +6,7 @@ type DataSource = 'tiingo' | 'yahoo';
 export interface NormalizedFundamentals {
   symbol: string;
   companyName?: string;
+  description?: string;
   currency?: string;
   exchange?: string;
   source: DataSource;
@@ -250,6 +251,7 @@ const buildTiingoResult = (
   return {
     symbol,
     companyName: metadata.name ?? symbol,
+    description: metadata.description,
     currency: 'USD',
     exchange: metadata.exchangeCode,
     source: 'tiingo',
@@ -296,8 +298,12 @@ const mergeSupplementalMetrics = (
     ...(supplemental.warnings ?? []),
   ];
 
+  // Prefer Yahoo description if available, fallback to primary (Tiingo)
+  const description = supplemental.description || primary.description;
+
   return {
     ...primary,
+    description,
     metrics: merged,
     warnings: warnings.length > 0 ? warnings : undefined,
   };
@@ -330,6 +336,7 @@ const normalizeYahooResult = (
 ): NormalizedFundamentals => ({
   symbol: yahoo.symbol,
   companyName: yahoo.companyName,
+  description: yahoo.description,
   currency: yahoo.currency,
   exchange: yahoo.exchangeName,
   source: 'yahoo',
@@ -383,41 +390,7 @@ export async function fetchFundamentalsWithFallback(
 
   const errors: unknown[] = [];
 
-  try {
-    const tiingoResult = await fetchFromTiingo(normalizedSymbol);
-
-    const needsSupplement =
-      tiingoResult.metrics.dividendYield === undefined ||
-      tiingoResult.metrics.dividendYield === null ||
-      tiingoResult.metrics.dividendYield === 0 ||
-      tiingoResult.metrics.payoutRatio === undefined ||
-      tiingoResult.metrics.payoutRatio === null;
-
-    if (!needsSupplement) {
-      return tiingoResult;
-    }
-
-    try {
-      const yahooSupplement = await fetchYahooFundamentals(normalizedSymbol, options);
-      const normalizedYahoo = normalizeYahooResult(yahooSupplement);
-      const merged = mergeSupplementalMetrics(tiingoResult, normalizedYahoo);
-      merged.source = tiingoResult.source;
-      return merged;
-    } catch (supplementError) {
-      const message =
-        supplementError instanceof Error ? supplementError.message : String(supplementError);
-      console.warn(
-        `[fundamentals] Unable to supplement Tiingo data for ${normalizedSymbol}: ${message}`,
-      );
-      return tiingoResult;
-    }
-  } catch (error) {
-    errors.push(error);
-    const message =
-      error instanceof Error ? error.message : JSON.stringify(error, null, 2);
-    console.warn(`[fundamentals] Tiingo fetch failed for ${normalizedSymbol}: ${message}`);
-  }
-
+  // Try Yahoo first - it's free, has better coverage, and more complete data
   try {
     const yahooResult = await fetchYahooFundamentals(normalizedSymbol, options);
     return normalizeYahooResult(yahooResult);
@@ -425,8 +398,19 @@ export async function fetchFundamentalsWithFallback(
     errors.push(error);
     const message =
       error instanceof Error ? error.message : JSON.stringify(error, null, 2);
+    console.warn(`[fundamentals] Yahoo fetch failed for ${normalizedSymbol}: ${message}`);
+  }
+
+  // Fall back to Tiingo if Yahoo fails (rare case)
+  try {
+    const tiingoResult = await fetchFromTiingo(normalizedSymbol);
+    return tiingoResult;
+  } catch (error) {
+    errors.push(error);
+    const message =
+      error instanceof Error ? error.message : JSON.stringify(error, null, 2);
     console.error(
-      `[fundamentals] Yahoo fallback failed for ${normalizedSymbol}: ${message}`,
+      `[fundamentals] Tiingo fallback failed for ${normalizedSymbol}: ${message}`,
     );
     if (errors.length === 1) {
       throw error;

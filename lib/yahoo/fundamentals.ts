@@ -6,12 +6,13 @@ const YAHOO_QUOTE_SUMMARY_BASE =
   'https://query2.finance.yahoo.com/v10/finance/quoteSummary/';
 const FUNDAMENTALS_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 const FUNDAMENTALS_TTL_SECONDS = Math.floor(FUNDAMENTALS_TTL_MS / 1000); // 43200 seconds
-const FUNDAMENTALS_CACHE_KEY_PREFIX = 'fundamentals:yahoo:';
+const FUNDAMENTALS_CACHE_KEY_PREFIX = 'fundamentals:yahoo:v2:';
 const REQUESTED_MODULES = [
   'financialData',
   'defaultKeyStatistics',
   'summaryDetail',
   'price',
+  'assetProfile',
   'incomeStatementHistory',
   'incomeStatementHistoryQuarterly',
   'balanceSheetHistory',
@@ -68,6 +69,7 @@ export interface YahooFundamentalsMetrics {
 export interface YahooFundamentals {
   symbol: string;
   companyName?: string;
+  description?: string;
   currency?: string;
   exchangeName?: string;
   source: 'yahoo';
@@ -309,6 +311,7 @@ const parseQuoteSummary = (
   const financialData = result.financialData ?? {};
   const summaryDetail = result.summaryDetail ?? {};
   const keyStatistics = result.defaultKeyStatistics ?? {};
+  const assetProfile = result.assetProfile ?? {};
   const statementMetrics = computeStatementDerivedMetrics(result);
 
   const currentPrice =
@@ -384,6 +387,10 @@ const parseQuoteSummary = (
     companyName:
       (price.longName as string | undefined) ??
       (price.shortName as string | undefined),
+    description:
+      typeof assetProfile.longBusinessSummary === 'string'
+        ? assetProfile.longBusinessSummary
+        : undefined,
     currency: typeof price.currency === 'string' ? price.currency : undefined,
     exchangeName:
       (price.exchangeName as string | undefined) ??

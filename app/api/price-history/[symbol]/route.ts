@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ratelimit } from '@/lib/ratelimit';
+import { fetchYahooPriceHistory } from '@/lib/yahoo/priceHistory';
 
 const TIINGO_API_KEY = process.env.TIINGO_API_KEY;
 const TIINGO_BASE_URL = 'https://api.tiingo.com';
@@ -101,6 +102,23 @@ export async function GET(
 
   const startDateStr = startDate.toISOString().split('T')[0];
 
+  // Try Yahoo Finance first - free and unlimited
+  try {
+    const result = await fetchYahooPriceHistory(symbol, period);
+
+    return NextResponse.json(result, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400',
+        'X-RateLimit-Limit': rateLimitResult.limit.toString(),
+        'X-RateLimit-Remaining': rateLimitResult.remaining.toString(),
+        'X-RateLimit-Reset': rateLimitResult.reset.toString(),
+      },
+    });
+  } catch (yahooError) {
+    console.warn(`[price-history] Yahoo fetch failed for ${symbol}, falling back to Tiingo:`, yahooError);
+  }
+
+  // Fall back to Tiingo if Yahoo fails
   try {
     if (!TIINGO_API_KEY) {
       throw new Error('TIINGO_API_KEY is not configured');
