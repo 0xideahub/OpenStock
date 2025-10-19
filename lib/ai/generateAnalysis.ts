@@ -90,6 +90,17 @@ const buildGrowthUserPrompt = (payload: AnalysisPayload): string => {
   return lines.join('\n');
 };
 
+const sanitizeAnalysisText = (text: string): string => {
+  const lines = text
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+  const filtered = lines.filter(
+    (line) => !/^recommendation\s*:/i.test(line),
+  );
+  return filtered.join('\n');
+};
+
 const buildGrowthFallbackAnalysis = (
   payload: AnalysisPayload,
   failureReason?: string,
@@ -114,7 +125,14 @@ const buildGrowthFallbackAnalysis = (
       : undefined;
   const debtToEquity = formatNumber(metrics.debtToEquity);
 
-  const summaryParts: string[] = [];
+  const outlookPhrase =
+    recommendation === 'buy'
+      ? 'favors a BUY signal'
+      : recommendation === 'hold'
+        ? 'suggests HOLD and monitor'
+        : 'leans toward PASS for now';
+
+  const summaryParts: string[] = [`Outlook ${outlookPhrase}`];
   if (growthRate) summaryParts.push(`growth at ${growthRate}`);
   if (roe) summaryParts.push(`ROE ${roe}`);
   if (peg) summaryParts.push(`PEG ${peg}`);
@@ -134,15 +152,9 @@ const buildGrowthFallbackAnalysis = (
     if (roe) bulletLines.push(`• ROE sits near ${roe}`);
   }
 
-  const recReason =
-    reasons[0] ??
-    (warnings[0] ? `Monitor ${warnings[0].toLowerCase()}` : 'Assess catalysts against current valuation.');
-  const recommendationLine = `Recommendation: ${recommendation.toUpperCase()} — ${recReason}`;
-  const fallbackLine = failureReason
-    ? `*(Fallback reason: ${failureReason})*`
-    : undefined;
+  const fallbackLine = failureReason ? `*(Fallback reason: ${failureReason})*` : undefined;
 
-  return [summary, ...bulletLines, recommendationLine, fallbackLine]
+  return [summary, ...bulletLines, fallbackLine]
     .filter(Boolean)
     .join('\n')
     .trim();
@@ -174,7 +186,9 @@ export async function generateAnalysis(
     return {
       symbol: payload.symbol.toUpperCase(),
       investorType: payload.investorType,
-      analysis: buildGrowthFallbackAnalysis(payload, 'OpenAI API key not configured'),
+      analysis: sanitizeAnalysisText(
+        buildGrowthFallbackAnalysis(payload, 'OpenAI API key not configured'),
+      ),
       cached: false,
       source: 'fallback',
       fetchedAt: new Date().toISOString(),
@@ -215,10 +229,11 @@ export async function generateAnalysis(
     }
 
     const data = await response.json();
-    const content =
+    const rawContent =
       data?.choices?.[0]?.message?.content?.trim() ||
       data?.choices?.[0]?.text?.trim() ||
       buildGrowthFallbackAnalysis(payload, 'OpenAI response empty');
+    const content = sanitizeAnalysisText(rawContent);
 
     const result: AnalysisResult = {
       symbol: payload.symbol.toUpperCase(),
@@ -247,7 +262,7 @@ export async function generateAnalysis(
     return {
       symbol: payload.symbol.toUpperCase(),
       investorType: payload.investorType,
-      analysis: buildGrowthFallbackAnalysis(payload, reason),
+      analysis: sanitizeAnalysisText(buildGrowthFallbackAnalysis(payload, reason)),
       cached: false,
       source: 'fallback',
       fetchedAt: new Date().toISOString(),
