@@ -23,13 +23,13 @@ const RATE_LIMIT_WINDOW = (process.env.RATE_LIMIT_WINDOW || '60 s') as `${number
  * Requires UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN environment variables
  */
 let redis: Redis | null = null;
-let ratelimit: Ratelimit | null = null;
+let ratelimitInstance: Ratelimit | null = null;
 
 try {
   if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
     redis = Redis.fromEnv();
 
-    ratelimit = new Ratelimit({
+    ratelimitInstance = new Ratelimit({
       redis,
       limiter: Ratelimit.slidingWindow(RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW),
       analytics: true, // Enable analytics for monitoring
@@ -44,6 +44,9 @@ try {
   console.error('[ratelimit] Failed to initialize Upstash Redis:', error);
 }
 
+// Export the ratelimit instance
+export const ratelimit = ratelimitInstance;
+
 /**
  * Rate limit check for incoming requests
  *
@@ -52,7 +55,7 @@ try {
  */
 export async function checkRateLimit(request: Request) {
   // If rate limiting is not configured, allow all requests
-  if (!ratelimit) {
+  if (!ratelimitInstance) {
     return {
       success: true,
       limit: RATE_LIMIT_REQUESTS,
@@ -68,7 +71,7 @@ export async function checkRateLimit(request: Request) {
 
   try {
     // Check rate limit for this IP
-    const result = await ratelimit.limit(ip);
+    const result = await ratelimitInstance.limit(ip);
 
     if (!result.success) {
       console.warn(`[ratelimit] Rate limit exceeded for IP: ${ip}`);
@@ -109,5 +112,5 @@ export function getRateLimitHeaders(result: {
  * Check if rate limiting is enabled
  */
 export function isRateLimitEnabled(): boolean {
-  return ratelimit !== null;
+  return ratelimitInstance !== null;
 }
