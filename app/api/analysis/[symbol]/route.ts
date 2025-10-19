@@ -8,6 +8,7 @@ type InvestorType = 'growth' | 'value' | 'income';
 interface AnalysisRequestBody {
   investorType: InvestorType;
   companyName?: string;
+  recommendation?: 'buy' | 'hold' | 'pass';
   metrics?: {
     pe?: number;
     pb?: number;
@@ -110,11 +111,22 @@ export async function POST(
     );
   }
 
+  if (!payload.recommendation || !['buy', 'hold', 'pass'].includes(payload.recommendation)) {
+    return NextResponse.json(
+      { error: 'recommendation must be one of "buy", "hold", or "pass"' },
+      {
+        status: 400,
+        headers: getRateLimitHeaders(rateLimitResult),
+      },
+    );
+  }
+
   try {
     const result = await generateAnalysis({
       symbol: normalizedSymbol,
       investorType,
       companyName: payload.companyName,
+      recommendation: payload.recommendation,
       metrics: payload.metrics ?? {},
       reasons: payload.reasons ?? [],
       warnings: payload.warnings ?? [],

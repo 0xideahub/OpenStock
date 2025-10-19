@@ -82,6 +82,7 @@ describe('POST /api/analysis/[symbol]', () => {
       source: 'openai',
       fetchedAt: now,
       model: 'gpt-4o-mini',
+      recommendation: 'buy',
     });
 
     const response = await POST(
@@ -90,6 +91,7 @@ describe('POST /api/analysis/[symbol]', () => {
         {
           investorType: 'growth',
           companyName: 'Apple Inc.',
+          recommendation: 'buy',
           metrics: { pe: 25, growth: 18 },
           reasons: ['Strong growth'],
           warnings: [],
@@ -103,6 +105,7 @@ describe('POST /api/analysis/[symbol]', () => {
       symbol: 'AAPL',
       investorType: 'growth',
       companyName: 'Apple Inc.',
+      recommendation: 'buy',
       metrics: { pe: 25, growth: 18 },
       reasons: ['Strong growth'],
       warnings: [],
@@ -118,6 +121,7 @@ describe('POST /api/analysis/[symbol]', () => {
         source: 'openai',
         fetchedAt: now,
         model: 'gpt-4o-mini',
+        recommendation: 'buy',
       },
     });
   });
@@ -127,7 +131,7 @@ describe('POST /api/analysis/[symbol]', () => {
     generateAnalysisMock.mockRejectedValue(new Error('OpenAI failure'));
 
     const response = await POST(
-      buildRequest('TSLA', { investorType: 'growth' }, 'secret'),
+      buildRequest('TSLA', { investorType: 'growth', recommendation: 'hold' }, 'secret'),
       buildContext('TSLA'),
     );
 
@@ -135,5 +139,20 @@ describe('POST /api/analysis/[symbol]', () => {
     await expect(response.json()).resolves.toEqual({
       error: 'Failed to generate analysis',
     });
+  });
+
+  it('requires recommendation field', async () => {
+    const { POST } = await import('./route');
+
+    const response = await POST(
+      buildRequest('MSFT', { investorType: 'growth' }, 'secret'),
+      buildContext('MSFT'),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: 'recommendation must be one of "buy", "hold", or "pass"',
+    });
+    expect(generateAnalysisMock).not.toHaveBeenCalled();
   });
 });
