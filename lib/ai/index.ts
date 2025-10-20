@@ -1,0 +1,1 @@
+export { generateWhatsChangedUpdate } from './generateWhatsChangedUpdate';
