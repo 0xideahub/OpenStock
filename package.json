@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "node scripts/run-next.js dev --turbopack",
     "build": "next build --turbopack",
-    "start": "next start",
+    "start": "node scripts/run-next.js start",
     "lint": "eslint",
     "test": "vitest run",
     "test:db": "node scripts/test-db.mjs"
