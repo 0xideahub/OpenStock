@@ -197,6 +197,8 @@ const fetchYahooGeneralNews = async (
 ): Promise<MarketNewsArticle[]> => {
     const queries = ['^GSPC', '^IXIC', 'market news today'];
     const collected: MarketNewsArticle[] = [];
+    const sourceCounts = new Map<string, number>();
+    const MAX_PER_SOURCE = 2;
 
     for (const query of queries) {
         try {
@@ -221,13 +223,20 @@ const fetchYahooGeneralNews = async (
                 const assignedTicker = tickers[0] ?? 'MARKET';
                 const normalized = normalizeYahooArticle(article, assignedTicker);
                 const uniqueId = `${normalized.id}-${assignedTicker}`;
+                const sourceKey = (normalized.source || 'unknown').toLowerCase();
+                const currentSourceCount = sourceCounts.get(sourceKey) ?? 0;
 
                 if (excludeIds.has(uniqueId)) {
                     continue;
                 }
 
+                if (currentSourceCount >= MAX_PER_SOURCE) {
+                    continue;
+                }
+
                 collected.push(normalized);
                 excludeIds.add(uniqueId);
+                sourceCounts.set(sourceKey, currentSourceCount + 1);
 
                 if (collected.length >= maxArticles) {
                     return collected

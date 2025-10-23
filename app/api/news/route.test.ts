@@ -180,6 +180,36 @@ describe('/api/news', () => {
         expect(body.data[0].ticker).toBe('MARKET');
     });
 
+    it('limits general market news to two articles per source', async () => {
+        mockedGetNews.mockRejectedValue(new Error('FINNHUB API key is not configured'));
+        const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+        fetchMock
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ news: [] }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    news: [1, 2, 3, 4].map((index) => ({
+                        uuid: `barrons-${index}`,
+                        title: `Barrons headline ${index}`,
+                        link: `https://example.com/${index}`,
+                        publisher: 'Barrons.com',
+                        providerPublishTime: 1_700_001_000 + index,
+                    })),
+                }),
+            });
+
+        const request = new NextRequest('http://localhost:3000/api/news');
+        const response = await GET(request);
+        const body = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(body.data.length).toBeLessThanOrEqual(2);
+        expect(new Set(body.data.map((item: any) => item.headline)).size).toBe(body.data.length);
+    });
+
     it('returns 503 when Finnhub key missing and Yahoo returns no news', async () => {
         mockedGetNews.mockRejectedValue(new Error('FINNHUB API key is not configured'));
         const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
