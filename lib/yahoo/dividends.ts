@@ -37,9 +37,12 @@ export async function fetchYahooDividendHistory(
     throw new Error('Symbol is required');
   }
 
+  // Yahoo Finance uses hyphens for class shares (e.g., BRK-B instead of BRK.B)
+  const yahooSymbol = normalizedSymbol.replace(/\./g, '-');
+
   const session = await getYahooSession();
   const url = `${YAHOO_CHART_BASE}${encodeURIComponent(
-    normalizedSymbol
+    yahooSymbol
   )}?range=${encodeURIComponent(range)}&interval=1d&events=div`;
 
   const response = await fetchWithTimeout(

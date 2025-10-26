@@ -64,6 +64,8 @@ export interface YahooFundamentalsMetrics {
   freeCashflowPayoutRatio?: number;
   revenueGrowthHistory?: Array<{ period: string; value: number }>;
   earningsGrowthHistory?: Array<{ period: string; value: number }>;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
 }
 
 export interface YahooFundamentals {
@@ -291,7 +293,9 @@ export const __testables = {
 };
 
 const buildQuoteSummaryUrl = (symbol: string, crumb: string): string => {
-  const url = new URL(`${YAHOO_QUOTE_SUMMARY_BASE}${encodeURIComponent(symbol)}`);
+  // Yahoo Finance uses hyphens for class shares (e.g., BRK-B instead of BRK.B)
+  const yahooSymbol = symbol.replace(/\./g, '-');
+  const url = new URL(`${YAHOO_QUOTE_SUMMARY_BASE}${encodeURIComponent(yahooSymbol)}`);
   url.searchParams.set('modules', REQUESTED_MODULES.join(','));
   url.searchParams.set('crumb', crumb);
   return url.toString();
@@ -378,6 +382,8 @@ const parseQuoteSummary = (
     freeCashflowPayoutRatio: statementMetrics.freeCashflowPayoutRatio,
     revenueGrowthHistory: statementMetrics.revenueGrowthHistory,
     earningsGrowthHistory: statementMetrics.earningsGrowthHistory,
+    fiftyTwoWeekHigh: numberFrom(summaryDetail.fiftyTwoWeekHigh ?? keyStatistics.fiftyTwoWeekHigh),
+    fiftyTwoWeekLow: numberFrom(summaryDetail.fiftyTwoWeekLow ?? keyStatistics.fiftyTwoWeekLow),
   };
 
   return {

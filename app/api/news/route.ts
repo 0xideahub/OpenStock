@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getNews } from '@/lib/actions/finnhub.actions';
-
 const SYMBOL_REGEX = /^[A-Z0-9.\-]{1,10}$/;
 const MAX_ARTICLES = 6;
 
@@ -274,47 +272,28 @@ export async function GET(request: NextRequest) {
     let articles: MarketNewsArticle[] = [];
     let primaryError: unknown;
 
+    // Use Yahoo Finance directly (Finnhub removed with MongoDB cleanup)
     try {
-        articles = await getNews(symbols);
-    } catch (error) {
-        primaryError = error;
-        console.warn('[news] Finnhub getNews failed, attempting Yahoo fallback:', error);
-    }
+        const watchlistArticles = await fetchYahooWatchlistNews(symbols ?? [], MAX_ARTICLES);
+        articles = watchlistArticles;
 
-    if (articles.length === 0) {
-        try {
-            const watchlistArticles = await fetchYahooWatchlistNews(symbols ?? [], MAX_ARTICLES);
-            articles = watchlistArticles;
-
-            if (articles.length < MAX_ARTICLES) {
-                const excludeIds = new Set(
-                    watchlistArticles.map((article) => `${article.id}-${article.related}`)
-                );
-                const generalArticles = await fetchYahooGeneralNews(
-                    excludeIds,
-                    MAX_ARTICLES - articles.length
-                );
-                articles = [...articles, ...generalArticles];
-            }
-        } catch (fallbackError) {
-            console.error('[news] Yahoo fallback failed:', fallbackError);
-            primaryError = primaryError ?? fallbackError;
+        if (articles.length < MAX_ARTICLES) {
+            const excludeIds = new Set(
+                watchlistArticles.map((article) => `${article.id}-${article.related}`)
+            );
+            const generalArticles = await fetchYahooGeneralNews(
+                excludeIds,
+                MAX_ARTICLES - articles.length
+            );
+            articles = [...articles, ...generalArticles];
         }
+    } catch (error) {
+        console.error('[news] Yahoo news fetch failed:', error);
+        primaryError = error;
     }
 
     if (articles.length === 0) {
         console.error('GET /api/news error:', primaryError);
-        if (
-            primaryError instanceof Error &&
-            primaryError.message &&
-            primaryError.message.includes('FINNHUB API key')
-        ) {
-            return NextResponse.json(
-                { error: 'News feed unavailable: FINNHUB_API_KEY is not configured.' },
-                { status: 503 }
-            );
-        }
-
         return NextResponse.json({ error: 'Failed to load news' }, { status: 502 });
     }
 

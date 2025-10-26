@@ -97,14 +97,38 @@ export async function checkRateLimit(request: Request) {
  * Follows standard RateLimit header fields (draft RFC)
  */
 export function getRateLimitHeaders(result: {
-  limit: number;
-  remaining: number;
-  reset: number;
+  limit: number | undefined;
+  remaining: number | undefined;
+  reset: number | string | undefined;
 }) {
+  let resetDate: Date;
+
+  if (typeof result.reset === 'number' && Number.isFinite(result.reset)) {
+    resetDate = new Date(result.reset);
+  } else if (typeof result.reset === 'string' && result.reset.length > 0) {
+    resetDate = new Date(result.reset);
+  } else {
+    resetDate = new Date(NaN);
+  }
+
+  const safeReset = Number.isNaN(resetDate.getTime())
+    ? new Date(Date.now() + 60_000)
+    : resetDate;
+
+  const limit =
+    typeof result.limit === 'number' && Number.isFinite(result.limit)
+      ? result.limit
+      : RATE_LIMIT_REQUESTS;
+
+  const remaining =
+    typeof result.remaining === 'number' && Number.isFinite(result.remaining)
+      ? result.remaining
+      : Math.max(0, limit - 1);
+
   return {
-    'X-RateLimit-Limit': result.limit.toString(),
-    'X-RateLimit-Remaining': result.remaining.toString(),
-    'X-RateLimit-Reset': new Date(result.reset).toISOString(),
+    'X-RateLimit-Limit': limit.toString(),
+    'X-RateLimit-Remaining': remaining.toString(),
+    'X-RateLimit-Reset': safeReset.toISOString(),
   };
 }
 

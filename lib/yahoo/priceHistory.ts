@@ -27,12 +27,15 @@ export async function fetchYahooPriceHistory(
 ): Promise<YahooPriceHistory> {
   const normalizedSymbol = symbol.trim().toUpperCase();
 
+  // Yahoo Finance uses hyphens for class shares (e.g., BRK-B instead of BRK.B)
+  const yahooSymbol = normalizedSymbol.replace(/\./g, '-');
+
   // Calculate date range
   const endDate = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
   const startDate = calculateStartDate(endDate, period);
 
   const session = await getYahooSession();
-  const url = `${YAHOO_CHART_BASE}${encodeURIComponent(normalizedSymbol)}?period1=${startDate}&period2=${endDate}&interval=1d`;
+  const url = `${YAHOO_CHART_BASE}${encodeURIComponent(yahooSymbol)}?period1=${startDate}&period2=${endDate}&interval=1d`;
 
   try {
     const response = await fetchWithTimeout(
@@ -81,13 +84,13 @@ export async function fetchYahooPriceHistory(
     );
 
     return {
-      symbol: normalizedSymbol,
+      symbol: normalizedSymbol, // Return original symbol format (with dot)
       data,
       period,
       fetchedAt: new Date().toISOString(),
     };
   } catch (error) {
-    console.error(`[yahoo-price-history] Failed to fetch for ${normalizedSymbol}:`, error);
+    console.error(`[yahoo-price-history] Failed to fetch for ${normalizedSymbol} (Yahoo: ${yahooSymbol}):`, error);
     throw error;
   }
 }
