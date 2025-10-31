@@ -81,11 +81,15 @@ export async function GET(req: NextRequest) {
   try {
     const cached = await getCached<SearchResult[]>(cacheKey);
     if (cached) {
-      console.log(`[search] Cache hit for query: "${query}"`);
-      return NextResponse.json({
-        results: cached,
-        cached: true
-      }, { headers: getRateLimitHeaders(rateLimitResult) });
+      if (Array.isArray(cached) && cached.length === 0) {
+        console.log(`[search] Cache contained empty results for "${query}", refetching`);
+      } else {
+        console.log(`[search] Cache hit for query: "${query}"`);
+        return NextResponse.json({
+          results: cached,
+          cached: true
+        }, { headers: getRateLimitHeaders(rateLimitResult) });
+      }
     }
   } catch (cacheError) {
     console.warn('[search] Cache read failed:', cacheError);
@@ -121,7 +125,16 @@ export async function GET(req: NextRequest) {
         if (quote.quoteType !== 'EQUITY') return false;
 
         // Only include US exchanges (NASDAQ, NYSE, AMEX)
-        const usExchanges = ['NASDAQ', 'NYSE', 'AMEX', 'NMS', 'NYQ', 'NGM'];
+        const usExchanges = [
+          'NASDAQ',
+          'NYSE',
+          'AMEX',
+          'NMS', // Nasdaq Global Market
+          'NGM', // Nasdaq Global Market (alias)
+          'NGS', // Nasdaq Global Select Market
+          'NYQ', // NYSE
+          'NCM', // Nasdaq Capital Market
+        ];
         if (quote.exchDisp && !usExchanges.includes(quote.exchDisp)) return false;
 
         return true;
@@ -136,12 +149,14 @@ export async function GET(req: NextRequest) {
 
     console.log(`[search] Found ${results.length} results for "${query}"`);
 
-    // Cache results for 1 hour
-    try {
-      await setCached(cacheKey, results, 3600);
-    } catch (cacheError) {
-      console.warn('[search] Cache write failed:', cacheError);
-      // Continue without caching
+    // Cache non-empty results for 1 hour
+    if (results.length > 0) {
+      try {
+        await setCached(cacheKey, results, 3600);
+      } catch (cacheError) {
+        console.warn('[search] Cache write failed:', cacheError);
+        // Continue without caching
+      }
     }
 
     return NextResponse.json({
