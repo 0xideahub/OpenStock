@@ -129,6 +129,7 @@ export async function POST(
 
     if (!recommendation && investorType !== 'income') {
       // New unified flow: Calculate valuation server-side
+      console.log(`[analysis] Received metrics for ${normalizedSymbol}:`, JSON.stringify(payload.metrics, null, 2));
       const valuation = evaluateStock(payload.metrics ?? {}, investorType);
       recommendation = valuation.recommendation;
       reasons = valuation.reasons;
