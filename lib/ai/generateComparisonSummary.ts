@@ -36,7 +36,7 @@ const CACHE_TTL_SECONDS = 60 * 60; // 1 hour
 const CACHE_KEY_PREFIX = 'comparison-summary:';
 
 const buildSystemPrompt = (): string =>
-  `You are Vaulk72's equity comparison analyst. Produce a crisp, two-sentence summary (max 65 words) highlighting who leads, why it matters for the specified investor type, and any notable risks. Use natural language—no bullet points, headings, or markdown. Stay grounded in the provided data.`;
+  `You are Vaulk72's equity comparison analyst providing premium investment insights. Write exactly 3 sentences: (1) Clearly state which company is the better investment and the primary reason why, referencing specific metrics like P/E ratio, ROE, growth rate, debt levels, etc. (2) Explain a key weakness or risk in the losing stock that makes it less attractive. (3) Give a clear actionable takeaway for this investor type. NEVER mention numerical scores like "40/100". Use natural, conversational language that makes the user feel like they're getting expert analysis. No bullet points, headings, or markdown.`;
 
 const buildUserPrompt = (payload: ComparisonSummaryPayload): string => {
   const lines: string[] = [];
@@ -46,7 +46,7 @@ const buildUserPrompt = (payload: ComparisonSummaryPayload): string => {
   lines.push(JSON.stringify(payload.stocks, null, 2));
   lines.push('Analysis JSON:');
   lines.push(JSON.stringify(payload.analysis, null, 2));
-  lines.push('Respond with a single paragraph (two sentences).');
+  lines.push('Respond with exactly 3 sentences following this structure: (1) winner + why, (2) loser weakness, (3) actionable takeaway.');
 
   return lines.join('\n');
 };
