@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCached, setCached } from '@/lib/cache';
 import { checkRateLimit, getRateLimitHeaders } from '@/lib/ratelimit';
+import { authenticate } from '@/lib/auth';
 
 /**
  * Stock Search API
@@ -43,25 +44,13 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // API Key Authentication
-  const apiKey = req.headers.get('x-api-key');
-  const expectedKey = process.env.INTERNAL_API_KEY;
-
-  if (!expectedKey) {
-    console.error('[api/search] INTERNAL_API_KEY not configured');
-    return NextResponse.json(
-      { error: 'Server configuration error' },
-      { status: 500, headers: getRateLimitHeaders(rateLimitResult) }
-    );
+  // JWT Authentication
+  const authResult = await authenticate(req);
+  if (authResult instanceof NextResponse) {
+    // Authentication failed, return the error response
+    return authResult;
   }
-
-  if (!apiKey || apiKey !== expectedKey) {
-    console.warn('[api/search] Unauthorized request - invalid or missing API key');
-    return NextResponse.json(
-      { error: 'Unauthorized - Invalid API key' },
-      { status: 401, headers: getRateLimitHeaders(rateLimitResult) }
-    );
-  }
+  // authResult is AuthResult with userId and method
 
   const searchParams = req.nextUrl.searchParams;
   const query = searchParams.get('q');
