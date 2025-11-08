@@ -6,14 +6,27 @@ type RateLimitHeaders = ReturnType<typeof getRateLimitHeaders>;
 
 type AuthResult = string | NextResponse;
 
+/**
+ * Authenticate user from JWT token
+ *
+ * TODO: When MongoDB is enabled, implement proper JWT verification:
+ * 1. Extract Bearer token from Authorization header
+ * 2. Verify token with Clerk: await clerkClient.verifyToken(token)
+ * 3. Return verified user ID from token.sub
+ * 4. Return 401 Unauthorized if token is missing or invalid
+ *
+ * Current implementation: Stub that returns success for local storage fallback
+ */
 function authenticate(request: Request, headers: RateLimitHeaders): AuthResult {
-  const userId = request.headers.get('x-user-id')?.trim();
+  const authHeader = request.headers.get('authorization');
 
-  if (!userId) {
-    return NextResponse.json({ error: 'Missing user identifier' }, { status: 400, headers });
+  if (!authHeader?.startsWith('Bearer ')) {
+    return NextResponse.json({ error: 'Missing authentication token' }, { status: 401, headers });
   }
 
-  return userId;
+  // TODO: Verify JWT token with Clerk when MongoDB is enabled
+  // For now, return a placeholder user ID since backend is a stub
+  return 'stub-user-id';
 }
 
 export async function GET(request: Request) {
