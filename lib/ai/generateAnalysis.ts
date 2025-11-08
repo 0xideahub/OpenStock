@@ -329,7 +329,7 @@ const getPromptForInvestorType = (investorType: InvestorType) => {
 };
 
 const buildCacheKey = (payload: AnalysisPayload) =>
-  `analysis:${payload.investorType}:${payload.symbol.toUpperCase()}`;
+  `analysis:v2:${payload.investorType}:${payload.symbol.toUpperCase()}`; // v2: Bumped for adjusted scoring thresholds
 
 export async function generateAnalysis(
   payload: AnalysisPayload,
