@@ -1,32 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { checkRateLimit, getRateLimitHeaders } from '@/lib/ratelimit';
-
-type RateLimitHeaders = ReturnType<typeof getRateLimitHeaders>;
-
-type AuthResult = string | NextResponse;
-
-function authenticate(request: Request, headers: RateLimitHeaders): AuthResult {
-  const apiKey = request.headers.get('x-api-key');
-  const expectedKey = process.env.INTERNAL_API_KEY;
-
-  if (!expectedKey) {
-    console.error('[watchlist-alerts] INTERNAL_API_KEY not configured');
-    return NextResponse.json({ error: 'Server configuration error' }, { status: 500, headers });
-  }
-
-  if (!apiKey || apiKey !== expectedKey) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers });
-  }
-
-  const deviceId = request.headers.get('x-device-id')?.trim();
-
-  if (!deviceId) {
-    return NextResponse.json({ error: 'Missing device identifier' }, { status: 400, headers });
-  }
-
-  return deviceId;
-}
+import { authenticate } from '@/lib/auth';
 
 export async function GET(request: Request) {
   const rateLimitResult = await checkRateLimit(request);
@@ -37,11 +12,15 @@ export async function GET(request: Request) {
     );
   }
 
-  const headers = getRateLimitHeaders(rateLimitResult);
-  const authResult = authenticate(request, headers);
-  if (typeof authResult !== 'string') {
+  // Authentication (supports API key or JWT)
+  const authResult = await authenticate(request);
+  if (authResult instanceof NextResponse) {
+    // Authentication failed, return the error response
     return authResult;
   }
+  // authResult is AuthResult with userId and method
+
+  const headers = getRateLimitHeaders(rateLimitResult);
 
   // MongoDB removed - return empty array to allow client-side local storage fallback
   return NextResponse.json({ data: [] }, { status: 200, headers });
@@ -56,11 +35,15 @@ export async function POST(request: Request) {
     );
   }
 
-  const headers = getRateLimitHeaders(rateLimitResult);
-  const authResult = authenticate(request, headers);
-  if (typeof authResult !== 'string') {
+  // Authentication (supports API key or JWT)
+  const authResult = await authenticate(request);
+  if (authResult instanceof NextResponse) {
+    // Authentication failed, return the error response
     return authResult;
   }
+  // authResult is AuthResult with userId and method
+
+  const headers = getRateLimitHeaders(rateLimitResult);
 
   let payload: {
     ticker?: string;
@@ -111,11 +94,15 @@ export async function PATCH(request: Request) {
     );
   }
 
-  const headers = getRateLimitHeaders(rateLimitResult);
-  const authResult = authenticate(request, headers);
-  if (typeof authResult !== 'string') {
+  // Authentication (supports API key or JWT)
+  const authResult = await authenticate(request);
+  if (authResult instanceof NextResponse) {
+    // Authentication failed, return the error response
     return authResult;
   }
+  // authResult is AuthResult with userId and method
+
+  const headers = getRateLimitHeaders(rateLimitResult);
 
   // MongoDB removed - return success to allow client-side local storage
   return NextResponse.json({ data: { success: true } }, { status: 200, headers });
@@ -130,11 +117,15 @@ export async function DELETE(request: Request) {
     );
   }
 
-  const headers = getRateLimitHeaders(rateLimitResult);
-  const authResult = authenticate(request, headers);
-  if (typeof authResult !== 'string') {
+  // Authentication (supports API key or JWT)
+  const authResult = await authenticate(request);
+  if (authResult instanceof NextResponse) {
+    // Authentication failed, return the error response
     return authResult;
   }
+  // authResult is AuthResult with userId and method
+
+  const headers = getRateLimitHeaders(rateLimitResult);
 
   // MongoDB removed - return success to allow client-side local storage
   return NextResponse.json({ data: { success: true } }, { status: 200, headers });

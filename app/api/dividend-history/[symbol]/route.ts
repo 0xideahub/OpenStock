@@ -4,6 +4,7 @@ import {
   fetchYahooDividendHistory,
   YahooDividendNotFoundError,
 } from '@/lib/yahoo/dividends';
+import { authenticate } from '@/lib/auth';
 
 const TIINGO_API_KEY = process.env.TIINGO_API_KEY;
 const TIINGO_BASE_URL = 'https://api.tiingo.com';
@@ -37,18 +38,13 @@ export async function GET(
     return NextResponse.json({ error: 'Invalid symbol' }, { status: 400 });
   }
 
-  // API Key Authentication
-  const apiKey = request.headers.get('x-api-key');
-  const expectedKey = process.env.INTERNAL_API_KEY;
-
-  if (!expectedKey) {
-    console.error('[api] INTERNAL_API_KEY not configured');
-    return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
+  // Authentication (supports API key or JWT)
+  const authResult = await authenticate(request);
+  if (authResult instanceof NextResponse) {
+    // Authentication failed, return the error response
+    return authResult;
   }
-
-  if (apiKey !== expectedKey) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // authResult is AuthResult with userId and method
 
   // Rate Limiting
   const ip = request.headers.get('x-forwarded-for') ?? request.headers.get('x-real-ip') ?? 'unknown';

@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { checkRateLimit, getRateLimitHeaders } from '@/lib/ratelimit';
 import { generateWhatsChangedUpdate } from '@/lib/ai/generateWhatsChangedUpdate';
 import { getCached, setCached } from '@/lib/cache';
+import { authenticate } from '@/lib/auth';
 
 type WhatsChangedFacts = {
   generatedAt: string;
@@ -53,23 +54,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const apiKey = request.headers.get('x-api-key');
-  const expectedKey = process.env.INTERNAL_API_KEY;
-
-  if (!expectedKey) {
-    console.error('[whats-changed] INTERNAL_API_KEY not configured');
-    return NextResponse.json(
-      { error: 'Server configuration error' },
-      { status: 500, headers: getRateLimitHeaders(rateLimitResult) },
-    );
+  // Authentication (supports API key or JWT)
+  const authResult = await authenticate(request);
+  if (authResult instanceof NextResponse) {
+    // Authentication failed, return the error response
+    return authResult;
   }
-
-  if (!apiKey || apiKey !== expectedKey) {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401, headers: getRateLimitHeaders(rateLimitResult) },
-    );
-  }
+  // authResult is AuthResult with userId and method
 
   let facts: WhatsChangedFacts;
   try {

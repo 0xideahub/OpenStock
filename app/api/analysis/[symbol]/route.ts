@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { checkRateLimit, getRateLimitHeaders } from '@/lib/ratelimit';
 import { generateAnalysis } from '@/lib/ai/generateAnalysis';
 import { evaluateStock } from '@/lib/valuation/evaluateStock';
+import { authenticate } from '@/lib/auth';
 
 type InvestorType = 'growth' | 'value' | 'income';
 
@@ -48,29 +49,13 @@ export async function POST(
     );
   }
 
-  const apiKey = request.headers.get('x-api-key');
-  const expectedKey = process.env.INTERNAL_API_KEY;
-
-  if (!expectedKey) {
-    console.error('[analysis] INTERNAL_API_KEY not configured');
-    return NextResponse.json(
-      { error: 'Server configuration error' },
-      {
-        status: 500,
-        headers: getRateLimitHeaders(rateLimitResult),
-      },
-    );
+  // Authentication (supports API key or JWT)
+  const authResult = await authenticate(request);
+  if (authResult instanceof NextResponse) {
+    // Authentication failed, return the error response
+    return authResult;
   }
-
-  if (!apiKey || apiKey !== expectedKey) {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      {
-        status: 401,
-        headers: getRateLimitHeaders(rateLimitResult),
-      },
-    );
-  }
+  // authResult is AuthResult with userId and method
 
   const { symbol } = await context.params;
   const normalizedSymbol = symbol?.trim().toUpperCase();
