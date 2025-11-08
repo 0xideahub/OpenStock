@@ -2,12 +2,14 @@ import { NextResponse } from 'next/server';
 
 import { checkRateLimit, getRateLimitHeaders } from '@/lib/ratelimit';
 import { generateAnalysis } from '@/lib/ai/generateAnalysis';
+import { evaluateStock } from '@/lib/valuation/evaluateStock';
 
 type InvestorType = 'growth' | 'value' | 'income';
 
 interface AnalysisRequestBody {
   investorType: InvestorType;
   companyName?: string;
+  // recommendation, reasons, warnings are now optional - will be calculated if not provided
   recommendation?: 'buy' | 'hold' | 'pass';
   metrics?: {
     pe?: number;
@@ -117,29 +119,64 @@ export async function POST(
     );
   }
 
-  if (!payload.recommendation || !['buy', 'hold', 'pass'].includes(payload.recommendation)) {
-    return NextResponse.json(
-      { error: 'recommendation must be one of "buy", "hold", or "pass"' },
-      {
-        status: 400,
-        headers: getRateLimitHeaders(rateLimitResult),
-      },
-    );
-  }
-
   try {
+    // Calculate valuation if not provided (unified flow)
+    // Support both legacy flow (recommendation provided) and new unified flow (calculate here)
+    let recommendation = payload.recommendation;
+    let reasons = payload.reasons ?? [];
+    let warnings = payload.warnings ?? [];
+    let score: number | undefined;
+
+    if (!recommendation && investorType !== 'income') {
+      // New unified flow: Calculate valuation server-side
+      const valuation = evaluateStock(payload.metrics ?? {}, investorType);
+      recommendation = valuation.recommendation;
+      reasons = valuation.reasons;
+      warnings = valuation.warnings;
+      score = valuation.score;
+      console.log(`[analysis] Calculated valuation for ${normalizedSymbol}: ${recommendation} (score: ${score})`);
+    } else if (!recommendation) {
+      // Income investor type not yet supported for server-side evaluation
+      return NextResponse.json(
+        { error: 'recommendation must be provided for income investor type' },
+        {
+          status: 400,
+          headers: getRateLimitHeaders(rateLimitResult),
+        },
+      );
+    }
+
+    if (!['buy', 'hold', 'pass'].includes(recommendation)) {
+      return NextResponse.json(
+        { error: 'recommendation must be one of "buy", "hold", or "pass"' },
+        {
+          status: 400,
+          headers: getRateLimitHeaders(rateLimitResult),
+        },
+      );
+    }
+
     const result = await generateAnalysis({
       symbol: normalizedSymbol,
       investorType,
       companyName: payload.companyName,
-      recommendation: payload.recommendation,
+      recommendation,
       metrics: payload.metrics ?? {},
-      reasons: payload.reasons ?? [],
-      warnings: payload.warnings ?? [],
+      reasons,
+      warnings,
     });
 
+    // Return unified response with valuation data + AI analysis
     return NextResponse.json(
-      { data: result },
+      {
+        data: {
+          ...result,
+          recommendation, // Include recommendation in response
+          score, // Include score if calculated (undefined for legacy flow)
+          reasons, // Include reasons
+          warnings, // Include warnings
+        },
+      },
       {
         status: 200,
         headers: getRateLimitHeaders(rateLimitResult),
