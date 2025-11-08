@@ -3,7 +3,6 @@ import { getCached, setCached } from '../cache';
 import {
   GROWTH_ANALYST_PROMPT,
   VALUE_ANALYST_PROMPT,
-  INCOME_ANALYST_PROMPT,
 } from './prompts';
 
 type InvestorType = 'growth' | 'value' | 'income';
@@ -323,7 +322,7 @@ const getPromptForInvestorType = (investorType: InvestorType) => {
     case 'value':
       return VALUE_ANALYST_PROMPT;
     case 'income':
-      return INCOME_ANALYST_PROMPT;
+      return VALUE_ANALYST_PROMPT;
     default:
       throw new Error(`Unsupported investor type for analysis: ${investorType}`);
   }
