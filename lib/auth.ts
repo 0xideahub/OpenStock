@@ -7,66 +7,39 @@ export interface AuthResult {
 }
 
 /**
- * Dual authentication: Supports both API key (legacy) and JWT tokens
+ * JWT authentication for all API endpoints
  *
- * MIGRATION PLAN:
- * 1. Phase 1: Support both API key and JWT (current)
- * 2. Phase 2: Mobile apps switch to JWT only
- * 3. Phase 3: Remove API key support after all clients updated
- * 4. Phase 4: Rotate/delete old API key
+ * MIGRATION COMPLETE:
+ * ✅ Phase 1: Backend supported both API key and JWT
+ * ✅ Phase 2: Mobile apps switched to JWT only
+ * ✅ Phase 3: Removed API key from mobile app bundle
+ * ✅ Phase 4: Removed API key support from backend (current)
  */
 export async function authenticate(request: Request): Promise<AuthResult | NextResponse> {
-  const apiKey = request.headers.get('x-api-key');
   const authHeader = request.headers.get('authorization');
 
-  // Method 1: Legacy API key (TEMPORARY - will be removed)
-  if (apiKey) {
-    const validApiKey = process.env.INTERNAL_API_KEY;
-    if (!validApiKey) {
-      return NextResponse.json(
-        { error: 'API key authentication not configured' },
-        { status: 500 }
-      );
-    }
-
-    if (apiKey === validApiKey) {
-      return {
-        userId: 'legacy-api-key',
-        method: 'api-key',
-      };
-    }
-
-    // Invalid API key
+  if (!authHeader?.startsWith('Bearer ')) {
     return NextResponse.json(
-      { error: 'Invalid API key' },
+      { error: 'Missing or invalid Authorization header. JWT token required.' },
       { status: 401 }
     );
   }
 
-  // Method 2: JWT token (PREFERRED)
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.replace('Bearer ', '');
+  const token = authHeader.replace('Bearer ', '');
 
-    try {
-      const client = await clerkClient();
-      const verified = await client.verifyToken(token);
+  try {
+    const client = await clerkClient();
+    const verified = await client.verifyToken(token);
 
-      return {
-        userId: verified.sub,
-        method: 'jwt',
-      };
-    } catch (error) {
-      console.error('[auth] JWT verification failed:', error);
-      return NextResponse.json(
-        { error: 'Invalid or expired token' },
-        { status: 401 }
-      );
-    }
+    return {
+      userId: verified.sub,
+      method: 'jwt',
+    };
+  } catch (error) {
+    console.error('[auth] JWT verification failed:', error);
+    return NextResponse.json(
+      { error: 'Invalid or expired JWT token' },
+      { status: 401 }
+    );
   }
-
-  // No authentication provided
-  return NextResponse.json(
-    { error: 'Missing authentication. Provide X-API-Key or Authorization header.' },
-    { status: 401 }
-  );
 }
