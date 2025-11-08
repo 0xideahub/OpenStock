@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { clerkClient } from '@clerk/nextjs/server';
+import { verifyToken } from '@clerk/backend';
 
 export interface AuthResult {
   userId: string;
@@ -28,8 +28,19 @@ export async function authenticate(request: Request): Promise<AuthResult | NextR
   const token = authHeader.replace('Bearer ', '');
 
   try {
-    const client = await clerkClient();
-    const verified = await client.verifyToken(token);
+    const secretKey = process.env.CLERK_SECRET_KEY;
+
+    if (!secretKey) {
+      console.error('[auth] CLERK_SECRET_KEY not configured');
+      return NextResponse.json(
+        { error: 'Server authentication not configured' },
+        { status: 500 }
+      );
+    }
+
+    const verified = await verifyToken(token, {
+      secretKey,
+    });
 
     return {
       userId: verified.sub,
