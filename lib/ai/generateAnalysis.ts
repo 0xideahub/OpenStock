@@ -30,6 +30,7 @@ export interface AnalysisPayload {
   };
   reasons: string[];
   warnings: string[];
+  isPremium?: boolean;
 }
 
 export interface AnalysisResult {
@@ -328,8 +329,10 @@ const getPromptForInvestorType = (investorType: InvestorType) => {
   }
 };
 
-const buildCacheKey = (payload: AnalysisPayload) =>
-  `analysis:v2:${payload.investorType}:${payload.symbol.toUpperCase()}`; // v2: Bumped for adjusted scoring thresholds
+const buildCacheKey = (payload: AnalysisPayload) => {
+  const tier = payload.isPremium ? 'premium' : 'free';
+  return `analysis:v3:${tier}:${payload.investorType}:${payload.symbol.toUpperCase()}`; // v3: Added premium tier support
+};
 
 export async function generateAnalysis(
   payload: AnalysisPayload,
@@ -357,6 +360,9 @@ export async function generateAnalysis(
   const systemPrompt = getPromptForInvestorType(payload.investorType);
   const userPrompt = buildUserPrompt(payload);
 
+  // Premium users get full detailed analysis, free users get truncated version
+  const maxTokens = payload.isPremium ? 1200 : 450;
+
   try {
     const response = await fetchWithTimeout(
       OPENAI_API_URL,
@@ -369,7 +375,7 @@ export async function generateAnalysis(
         body: JSON.stringify({
           model: DEFAULT_OPENAI_MODEL,
           temperature: 0.3,
-          max_tokens: 450,
+          max_tokens: maxTokens,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },

@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
+import { eq } from 'drizzle-orm';
 
 import { checkRateLimit, getRateLimitHeaders } from '@/lib/ratelimit';
 import { generateAnalysis } from '@/lib/ai/generateAnalysis';
 import { evaluateStock } from '@/lib/valuation/evaluateStock';
 import { authenticate } from '@/lib/auth';
+import { db } from '@/lib/db';
+import { user } from '@/lib/db/schema';
 
 type InvestorType = 'growth' | 'value' | 'income';
 
@@ -56,6 +59,21 @@ export async function POST(
     return authResult;
   }
   // authResult is AuthResult with userId and method
+
+  // Check user's premium status
+  let isPremium = false;
+  try {
+    const userRecord = await db.query.user.findFirst({
+      where: eq(user.id, authResult.userId),
+      columns: {
+        stripeSubscriptionStatus: true,
+      },
+    });
+    isPremium = userRecord?.stripeSubscriptionStatus === 'active';
+    console.log(`[analysis] User ${authResult.userId} premium status: ${isPremium}`);
+  } catch (error) {
+    console.warn('[analysis] Failed to check premium status, defaulting to free:', error);
+  }
 
   const { symbol } = await context.params;
   const normalizedSymbol = symbol?.trim().toUpperCase();
@@ -150,6 +168,7 @@ export async function POST(
       metrics: payload.metrics ?? {},
       reasons,
       warnings,
+      isPremium,
     });
 
     // Return unified response with valuation data + AI analysis
