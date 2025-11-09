@@ -59,7 +59,8 @@ export async function POST(req: NextRequest) {
       case 'payment_intent.succeeded':
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
         console.log('Payment succeeded:', paymentIntent.id);
-        // TODO: Handle successful payment
+        // Create subscription after successful payment
+        await handlePaymentIntentSucceeded(paymentIntent);
         break;
 
       case 'customer.subscription.created':
@@ -96,7 +97,34 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// Helper functions - implement based on your business logic
+// Helper functions
+async function handlePaymentIntentSucceeded(
+  paymentIntent: Stripe.PaymentIntent
+) {
+  const { customer, metadata } = paymentIntent;
+  const { priceId, userId } = metadata;
+
+  if (!customer || !priceId) {
+    console.error('[webhook] Missing customer or priceId in payment intent');
+    return;
+  }
+
+  console.log('[webhook] Creating subscription for customer:', customer);
+
+  try {
+    // Create subscription for this customer
+    const subscription = await stripe.subscriptions.create({
+      customer: customer as string,
+      items: [{ price: priceId }],
+      metadata: { userId },
+    });
+
+    console.log('[webhook] ✅ Subscription created:', subscription.id);
+  } catch (error) {
+    console.error('[webhook] Failed to create subscription:', error);
+  }
+}
+
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   // TODO: Implement your logic here
   // Example: Update user's subscription status in database
