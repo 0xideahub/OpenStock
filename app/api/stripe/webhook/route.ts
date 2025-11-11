@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
 async function handlePaymentIntentSucceeded(
   paymentIntent: Stripe.PaymentIntent
 ) {
-  const { customer, metadata } = paymentIntent;
+  const { customer, metadata, payment_method } = paymentIntent;
   const { priceId, userId } = metadata;
 
   if (!customer || !priceId) {
@@ -112,11 +112,29 @@ async function handlePaymentIntentSucceeded(
   console.log('[webhook] Creating subscription for customer:', customer);
 
   try {
+    // Attach payment method to customer if not already attached
+    if (payment_method) {
+      console.log('[webhook] Attaching payment method to customer:', payment_method);
+      await stripe.paymentMethods.attach(payment_method as string, {
+        customer: customer as string,
+      });
+
+      // Set as default payment method for subscriptions
+      await stripe.customers.update(customer as string, {
+        invoice_settings: {
+          default_payment_method: payment_method as string,
+        },
+      });
+
+      console.log('[webhook] ✅ Payment method attached and set as default');
+    }
+
     // Create subscription for this customer
     const subscription = await stripe.subscriptions.create({
       customer: customer as string,
       items: [{ price: priceId }],
       metadata: { userId },
+      default_payment_method: payment_method as string,
     });
 
     console.log('[webhook] ✅ Subscription created:', subscription.id);
