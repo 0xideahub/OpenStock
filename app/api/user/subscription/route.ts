@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { clerkClient } from '@clerk/backend';
 import { eq } from 'drizzle-orm';
 
 import { authenticate } from '@/lib/auth';
@@ -116,13 +117,50 @@ export async function GET(request: Request) {
 
     // Auto-create user if they don't exist yet (new user on first login)
     if (!userRecord) {
-      console.log(`[subscription] User ${userId} not found, creating...`);
+      console.log(`[subscription] User ${userId} not found, fetching from Clerk...`);
 
-      await db.insert(user).values({
-        id: userId,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
+      try {
+        // Fetch user details from Clerk
+        const clerkUser = await clerkClient.users.getUser(userId);
+
+        const userName = clerkUser.firstName && clerkUser.lastName
+          ? `${clerkUser.firstName} ${clerkUser.lastName}`.trim()
+          : clerkUser.firstName || clerkUser.lastName || 'User';
+
+        const userEmail = clerkUser.emailAddresses.find(
+          (email) => email.id === clerkUser.primaryEmailAddressId
+        )?.emailAddress || clerkUser.emailAddresses[0]?.emailAddress;
+
+        if (!userEmail) {
+          console.error(`[subscription] No email found for user ${userId}`);
+          return NextResponse.json(
+            { error: 'User email not found in Clerk' },
+            { status: 400 },
+          );
+        }
+
+        console.log(`[subscription] Creating user ${userId} with email ${userEmail}`);
+
+        // Create user with complete profile from Clerk
+        await db.insert(user).values({
+          id: userId,
+          name: userName,
+          email: userEmail,
+          emailVerified: clerkUser.emailAddresses[0]?.verification?.status === 'verified' || false,
+          image: clerkUser.imageUrl || null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+
+        console.log(`[subscription] ✅ Created user ${userId}`);
+
+      } catch (clerkError) {
+        console.error(`[subscription] Failed to fetch user from Clerk:`, clerkError);
+        return NextResponse.json(
+          { error: 'Failed to create user profile' },
+          { status: 500 },
+        );
+      }
 
       // Re-fetch after creation
       userRecord = await db.query.user.findFirst({
@@ -140,8 +178,6 @@ export async function GET(request: Request) {
           { status: 500 },
         );
       }
-
-      console.log(`[subscription] ✅ Created user ${userId}`);
     }
 
     // Map Stripe status to our tier/status
