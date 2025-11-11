@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { clerkClient } from '@clerk/backend';
+import { createClerkClient } from '@clerk/backend';
 import { eq } from 'drizzle-orm';
 
 import { authenticate } from '@/lib/auth';
@@ -120,8 +120,20 @@ export async function GET(request: Request) {
       console.log(`[subscription] User ${userId} not found, fetching from Clerk...`);
 
       try {
+        // Initialize Clerk client with secret key
+        const secretKey = process.env.CLERK_SECRET_KEY;
+        if (!secretKey) {
+          console.error('[subscription] CLERK_SECRET_KEY not configured');
+          return NextResponse.json(
+            { error: 'Server configuration error' },
+            { status: 500 },
+          );
+        }
+
+        const clerk = createClerkClient({ secretKey });
+
         // Fetch user details from Clerk
-        const clerkUser = await clerkClient.users.getUser(userId);
+        const clerkUser = await clerk.users.getUser(userId);
 
         const userName = clerkUser.firstName && clerkUser.lastName
           ? `${clerkUser.firstName} ${clerkUser.lastName}`.trim()
