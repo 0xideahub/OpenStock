@@ -146,7 +146,7 @@ async function ensureDatabase() {
 	if (!process.env.DATABASE_URL) {
 		if (!missingDatabaseLogged) {
 			console.warn(
-				"[watchlist] DATABASE_URL not configured, defaulting to free-tier limits",
+				"🛰️ [watchlist] DATABASE_URL not configured, defaulting to free-tier limits",
 			);
 			missingDatabaseLogged = true;
 		}
@@ -169,7 +169,7 @@ async function ensureDatabase() {
 		cachedUserTable = user;
 		return { db, user };
 	} catch (error) {
-		console.error("[watchlist] Failed to initialize database connection:", error);
+		console.error("🛰️ [watchlist] Failed to initialize database connection:", error);
 		return null;
 	}
 }
