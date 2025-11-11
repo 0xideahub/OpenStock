@@ -1,15 +1,24 @@
 import { clerkClient } from "@clerk/nextjs/server";
-import { auth } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 /**
  * POST /api/user/onboarding
  * Mark user's onboarding as complete in Clerk metadata
  */
-export async function POST() {
+export async function POST(req: NextRequest) {
 	try {
-		// Get authenticated user ID from Clerk
-		const { userId } = await auth();
+		// Get JWT token from Authorization header
+		const authHeader = req.headers.get("Authorization");
+		if (!authHeader || !authHeader.startsWith("Bearer ")) {
+			return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+		}
+
+		const token = authHeader.substring(7);
+
+		// Verify the JWT token and get user ID
+		const client = await clerkClient();
+		const verifiedToken = await client.verifyToken(token);
+		const userId = verifiedToken.sub;
 
 		if (!userId) {
 			return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -18,7 +27,6 @@ export async function POST() {
 		console.log(`[onboarding] Marking onboarding complete for user ${userId}`);
 
 		// Update Clerk user metadata
-		const client = await clerkClient();
 		await client.users.updateMetadata(userId, {
 			publicMetadata: {
 				hasCompletedOnboarding: true,
