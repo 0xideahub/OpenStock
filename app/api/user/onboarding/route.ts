@@ -1,5 +1,6 @@
-import { clerkClient } from "@clerk/nextjs/server";
+import { createClerkClient } from "@clerk/backend";
 import { NextRequest, NextResponse } from "next/server";
+import { authenticate } from "@/lib/auth";
 
 /**
  * POST /api/user/onboarding
@@ -7,27 +8,24 @@ import { NextRequest, NextResponse } from "next/server";
  */
 export async function POST(req: NextRequest) {
 	try {
-		// Get JWT token from Authorization header
-		const authHeader = req.headers.get("Authorization");
-		if (!authHeader || !authHeader.startsWith("Bearer ")) {
-			return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+		// Authenticate user via JWT
+		const authResult = await authenticate(req);
+		if (authResult instanceof NextResponse) {
+			return authResult; // Return error response
 		}
 
-		const token = authHeader.substring(7);
-
-		// Verify the JWT token and get user ID
-		const client = await clerkClient();
-		const verifiedToken = await client.verifyToken(token);
-		const userId = verifiedToken.sub;
-
-		if (!userId) {
-			return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-		}
+		const { userId } = authResult;
 
 		console.log(`[onboarding] Marking onboarding complete for user ${userId}`);
 
 		// Update Clerk user metadata
-		await client.users.updateMetadata(userId, {
+		const secretKey = process.env.CLERK_SECRET_KEY;
+		if (!secretKey) {
+			throw new Error("CLERK_SECRET_KEY not configured");
+		}
+
+		const clerkClient = createClerkClient({ secretKey });
+		await clerkClient.users.updateUserMetadata(userId, {
 			publicMetadata: {
 				hasCompletedOnboarding: true,
 			},
