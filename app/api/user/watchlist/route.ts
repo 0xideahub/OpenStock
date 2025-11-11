@@ -199,12 +199,6 @@ async function getMaxItemsForUser(userId: string): Promise<number> {
 			error,
 		);
 		return MAX_FREE_WATCHLIST_ITEMS;
-	} catch (error) {
-		console.error(
-			`[watchlist] Failed to resolve subscription status for ${userId}:`,
-			error,
-		);
-		return MAX_FREE_WATCHLIST_ITEMS;
 	}
 }
 
