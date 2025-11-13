@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { createClerkClient } from '@clerk/backend';
 import { eq } from 'drizzle-orm';
 
 import { authenticate } from '@/lib/auth';
@@ -105,7 +106,7 @@ export async function GET(request: Request) {
 
   try {
     // Query user from database
-    const userRecord = await db.query.user.findFirst({
+    let userRecord = await db.query.user.findFirst({
       where: eq(user.id, userId),
       columns: {
         stripeCustomerId: true,
@@ -114,11 +115,81 @@ export async function GET(request: Request) {
       },
     });
 
+    // Auto-create user if they don't exist yet (new user on first login)
     if (!userRecord) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 },
-      );
+      console.log(`[subscription] User ${userId} not found, fetching from Clerk...`);
+
+      try {
+        // Initialize Clerk client with secret key
+        const secretKey = process.env.CLERK_SECRET_KEY;
+        if (!secretKey) {
+          console.error('[subscription] CLERK_SECRET_KEY not configured');
+          return NextResponse.json(
+            { error: 'Server configuration error' },
+            { status: 500 },
+          );
+        }
+
+        const clerk = createClerkClient({ secretKey });
+
+        // Fetch user details from Clerk
+        const clerkUser = await clerk.users.getUser(userId);
+
+        const userName = clerkUser.firstName && clerkUser.lastName
+          ? `${clerkUser.firstName} ${clerkUser.lastName}`.trim()
+          : clerkUser.firstName || clerkUser.lastName || 'User';
+
+        const userEmail = clerkUser.emailAddresses.find(
+          (email) => email.id === clerkUser.primaryEmailAddressId
+        )?.emailAddress || clerkUser.emailAddresses[0]?.emailAddress;
+
+        if (!userEmail) {
+          console.error(`[subscription] No email found for user ${userId}`);
+          return NextResponse.json(
+            { error: 'User email not found in Clerk' },
+            { status: 400 },
+          );
+        }
+
+        console.log(`[subscription] Creating user ${userId} with email ${userEmail}`);
+
+        // Create user with complete profile from Clerk
+        await db.insert(user).values({
+          id: userId,
+          name: userName,
+          email: userEmail,
+          emailVerified: clerkUser.emailAddresses[0]?.verification?.status === 'verified' || false,
+          image: clerkUser.imageUrl || null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+
+        console.log(`[subscription] ✅ Created user ${userId}`);
+
+      } catch (clerkError) {
+        console.error(`[subscription] Failed to fetch user from Clerk:`, clerkError);
+        return NextResponse.json(
+          { error: 'Failed to create user profile' },
+          { status: 500 },
+        );
+      }
+
+      // Re-fetch after creation
+      userRecord = await db.query.user.findFirst({
+        where: eq(user.id, userId),
+        columns: {
+          stripeCustomerId: true,
+          stripeSubscriptionStatus: true,
+          subscriptionEndsAt: true,
+        },
+      });
+
+      if (!userRecord) {
+        return NextResponse.json(
+          { error: 'Failed to create user' },
+          { status: 500 },
+        );
+      }
     }
 
     // Map Stripe status to our tier/status

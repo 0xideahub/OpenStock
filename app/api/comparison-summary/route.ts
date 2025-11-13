@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { generateComparisonSummary } from '@/lib/ai/generateComparisonSummary';
+import { authenticate } from '@/lib/auth';
 import { checkRateLimit, getRateLimitHeaders } from '@/lib/ratelimit';
 
 type InvestorType = 'growth' | 'value' | 'income';
@@ -26,13 +27,7 @@ interface ComparisonSummaryRequestBody {
 
 const SUPPORTED_INVESTOR_TYPES: InvestorType[] = ['growth', 'value', 'income'];
 
-const extractApiKey = (req: NextRequest): string | null => {
-  const authHeader = req.headers.get('authorization') ?? req.headers.get('Authorization');
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.replace('Bearer ', '').trim();
-    return token.length > 0 ? token : null;
-  }
-
+const extractInternalApiKey = (req: NextRequest): string | null => {
   const apiKeyHeader = req.headers.get('x-api-key');
   if (apiKeyHeader) {
     const value = apiKeyHeader.trim();
@@ -77,27 +72,43 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let expectedKey: string | undefined;
-  try {
-    expectedKey = process.env.INTERNAL_API_KEY;
-    if (!expectedKey) {
-      throw new Error('INTERNAL_API_KEY not configured');
+  let userId: string | null = null;
+
+  const authHeader = req.headers.get('authorization') ?? req.headers.get('Authorization');
+  const bearerToken = authHeader?.startsWith('Bearer ')
+    ? authHeader.replace('Bearer ', '').trim()
+    : null;
+
+  if (bearerToken) {
+    const authResult = await authenticate(req);
+    if (!(authResult instanceof NextResponse)) {
+      userId = authResult.userId;
     }
-  } catch (error) {
-    console.error('[comparison-summary] Missing configuration:', error);
-    return NextResponse.json(
-      { error: 'Server configuration error' },
-      { status: 500, headers: getRateLimitHeaders(rateLimitResult) },
-    );
   }
 
-  const providedKey = extractApiKey(req);
+  if (!userId) {
+    let expectedKey: string | undefined;
+    try {
+      expectedKey = process.env.INTERNAL_API_KEY;
+      if (!expectedKey) {
+        throw new Error('INTERNAL_API_KEY not configured');
+      }
+    } catch (error) {
+      console.error('[comparison-summary] Missing configuration:', error);
+      return NextResponse.json(
+        { error: 'Server configuration error' },
+        { status: 500, headers: getRateLimitHeaders(rateLimitResult) },
+      );
+    }
 
-  if (!providedKey || providedKey !== expectedKey) {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401, headers: getRateLimitHeaders(rateLimitResult) },
-    );
+    const providedKey = extractInternalApiKey(req);
+
+    if (!providedKey || providedKey !== expectedKey) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401, headers: getRateLimitHeaders(rateLimitResult) },
+      );
+    }
   }
 
   let body: ComparisonSummaryRequestBody;
