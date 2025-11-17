@@ -335,7 +335,7 @@ const parseQuoteSummary = (
   const changePercent =
     percentFrom(price.regularMarketChangePercent) ??
     (change !== undefined && previousClose
-      ? (change / previousClose) * 100
+      ? change / previousClose
       : undefined);
 
   const metrics: YahooFundamentalsMetrics = {

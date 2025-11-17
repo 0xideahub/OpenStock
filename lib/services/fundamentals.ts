@@ -159,7 +159,7 @@ const deriveTiingoMetrics = ({
       : undefined;
   const changePercent =
     change !== undefined && previousAdjusted
-      ? (change / previousAdjusted) * 100
+      ? change / previousAdjusted
       : undefined;
 
   const roe =
