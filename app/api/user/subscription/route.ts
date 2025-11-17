@@ -151,9 +151,9 @@ export async function GET(request: Request) {
           );
         }
 
-        console.log(`[subscription] Creating user ${userId} with email ${userEmail}`);
+        console.log(`[subscription] Creating/updating user ${userId} with email ${userEmail}`);
 
-        // Create user with complete profile from Clerk
+        // Create user or update if email already exists (handle duplicate emails gracefully)
         await db.insert(user).values({
           id: userId,
           name: userName,
@@ -162,9 +162,16 @@ export async function GET(request: Request) {
           image: clerkUser.imageUrl || null,
           createdAt: new Date(),
           updatedAt: new Date(),
+        }).onConflictDoUpdate({
+          target: user.email,
+          set: {
+            name: userName,
+            image: clerkUser.imageUrl || null,
+            updatedAt: new Date(),
+          },
         });
 
-        console.log(`[subscription] ✅ Created user ${userId}`);
+        console.log(`[subscription] ✅ Created/updated user ${userId}`);
 
       } catch (clerkError) {
         console.error(`[subscription] Failed to fetch user from Clerk:`, clerkError);
