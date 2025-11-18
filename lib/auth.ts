@@ -39,6 +39,10 @@ export async function authenticate(request: Request): Promise<AuthResult | NextR
       );
     }
 
+    // Debug: Log what keys we're actually using (first/last chars only for security)
+    console.log('[auth] Using secret key:', secretKey?.substring(0, 15) + '...' + secretKey?.slice(-4));
+    console.log('[auth] Using publishable key:', publishableKey?.substring(0, 15) + '...' + publishableKey?.slice(-4));
+
     const verified = await verifyToken(token, {
       secretKey,
       ...(publishableKey && { publishableKey }),
