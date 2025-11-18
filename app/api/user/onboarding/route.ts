@@ -20,11 +20,16 @@ export async function POST(req: NextRequest) {
 
 		// Update Clerk user metadata
 		const secretKey = process.env.CLERK_SECRET_KEY;
+		const publishableKey = process.env.CLERK_PUBLISHABLE_KEY;
+
 		if (!secretKey) {
 			throw new Error("CLERK_SECRET_KEY not configured");
 		}
 
-		const clerkClient = createClerkClient({ secretKey });
+		const clerkClient = createClerkClient({
+			secretKey,
+			...(publishableKey && { publishableKey }),
+		});
 		await clerkClient.users.updateUserMetadata(userId, {
 			publicMetadata: {
 				hasCompletedOnboarding: true,

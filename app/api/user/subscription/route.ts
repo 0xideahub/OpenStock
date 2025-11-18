@@ -122,6 +122,8 @@ export async function GET(request: Request) {
       try {
         // Initialize Clerk client with secret key
         const secretKey = process.env.CLERK_SECRET_KEY;
+        const publishableKey = process.env.CLERK_PUBLISHABLE_KEY;
+
         if (!secretKey) {
           console.error('[subscription] CLERK_SECRET_KEY not configured');
           return NextResponse.json(
@@ -130,7 +132,10 @@ export async function GET(request: Request) {
           );
         }
 
-        const clerk = createClerkClient({ secretKey });
+        const clerk = createClerkClient({
+          secretKey,
+          ...(publishableKey && { publishableKey }),
+        });
 
         // Fetch user details from Clerk
         const clerkUser = await clerk.users.getUser(userId);

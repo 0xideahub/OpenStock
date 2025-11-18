@@ -47,11 +47,16 @@ function buildEmptyWatchlist(): StoredWatchlist {
 
 function getClerk(): ClerkClient {
 	const secretKey = process.env.CLERK_SECRET_KEY;
+	const publishableKey = process.env.CLERK_PUBLISHABLE_KEY;
+
 	if (!secretKey) {
 		throw new Error("CLERK_SECRET_KEY not configured");
 	}
 
-	return createClerkClient({ secretKey });
+	return createClerkClient({
+		secretKey,
+		...(publishableKey && { publishableKey }),
+	});
 }
 
 function sanitizeString(input: string, maxLength: number): string {

@@ -30,11 +30,16 @@ export async function GET(req: NextRequest) {
 
 		// Get user from Clerk
 		const secretKey = process.env.CLERK_SECRET_KEY;
+		const publishableKey = process.env.CLERK_PUBLISHABLE_KEY;
+
 		if (!secretKey) {
 			throw new Error("CLERK_SECRET_KEY not configured");
 		}
 
-		const clerkClient = createClerkClient({ secretKey });
+		const clerkClient = createClerkClient({
+			secretKey,
+			...(publishableKey && { publishableKey }),
+		});
 		const user = await clerkClient.users.getUser(userId);
 
 		const preferredInvestorType =
@@ -104,11 +109,16 @@ export async function PUT(req: NextRequest) {
 
 		// Update Clerk user metadata
 		const secretKey = process.env.CLERK_SECRET_KEY;
+		const publishableKey = process.env.CLERK_PUBLISHABLE_KEY;
+
 		if (!secretKey) {
 			throw new Error("CLERK_SECRET_KEY not configured");
 		}
 
-		const clerkClient = createClerkClient({ secretKey });
+		const clerkClient = createClerkClient({
+			secretKey,
+			...(publishableKey && { publishableKey }),
+		});
 		await clerkClient.users.updateUserMetadata(userId, {
 			publicMetadata: {
 				preferredInvestorType,
