@@ -29,6 +29,7 @@ export async function authenticate(request: Request): Promise<AuthResult | NextR
 
   try {
     const secretKey = process.env.CLERK_SECRET_KEY;
+    const publishableKey = process.env.CLERK_PUBLISHABLE_KEY;
 
     if (!secretKey) {
       console.error('[auth] CLERK_SECRET_KEY not configured');
@@ -40,6 +41,7 @@ export async function authenticate(request: Request): Promise<AuthResult | NextR
 
     const verified = await verifyToken(token, {
       secretKey,
+      ...(publishableKey && { publishableKey }),
     });
 
     return {
