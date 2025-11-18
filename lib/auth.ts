@@ -31,6 +31,14 @@ export async function authenticate(request: Request): Promise<AuthResult | NextR
     const secretKey = process.env.CLERK_SECRET_KEY;
     const publishableKey = process.env.CLERK_PUBLISHABLE_KEY;
 
+    console.log('[auth] ========== CLERK KEY DEBUG ==========');
+    console.log('[auth] Secret key exists:', !!secretKey);
+    console.log('[auth] Secret key preview:', secretKey?.substring(0, 20) + '...' + secretKey?.slice(-8));
+    console.log('[auth] Publishable key exists:', !!publishableKey);
+    console.log('[auth] Publishable key preview:', publishableKey?.substring(0, 20) + '...' + publishableKey?.slice(-8));
+    console.log('[auth] Publishable key FULL:', publishableKey);
+    console.log('[auth] ========================================');
+
     if (!secretKey) {
       console.error('[auth] CLERK_SECRET_KEY not configured');
       return NextResponse.json(
@@ -39,14 +47,14 @@ export async function authenticate(request: Request): Promise<AuthResult | NextR
       );
     }
 
-    // Debug: Log what keys we're actually using (first/last chars only for security)
-    console.log('[auth] Using secret key:', secretKey?.substring(0, 15) + '...' + secretKey?.slice(-4));
-    console.log('[auth] Using publishable key:', publishableKey?.substring(0, 15) + '...' + publishableKey?.slice(-4));
-
-    const verified = await verifyToken(token, {
+    const verifyOptions = {
       secretKey,
       ...(publishableKey && { publishableKey }),
-    });
+    };
+
+    console.log('[auth] Calling verifyToken with options:', Object.keys(verifyOptions));
+
+    const verified = await verifyToken(token, verifyOptions);
 
     return {
       userId: verified.sub,
