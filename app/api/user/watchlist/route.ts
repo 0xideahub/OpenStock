@@ -1,4 +1,3 @@
-import { createClerkClient, type ClerkClient } from "@clerk/backend";
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 
@@ -45,18 +44,46 @@ function buildEmptyWatchlist(): StoredWatchlist {
 	};
 }
 
-function getClerk(): ClerkClient {
+async function getClerkUser(userId: string): Promise<any> {
 	const secretKey = process.env.CLERK_SECRET_KEY;
-	const publishableKey = process.env.CLERK_PUBLISHABLE_KEY;
 
 	if (!secretKey) {
 		throw new Error("CLERK_SECRET_KEY not configured");
 	}
 
-	return createClerkClient({
-		secretKey,
-		...(publishableKey && { publishableKey }),
+	const response = await fetch(`https://api.clerk.com/v1/users/${userId}`, {
+		headers: {
+			'Authorization': `Bearer ${secretKey}`,
+			'Content-Type': 'application/json',
+		},
 	});
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch user from Clerk: ${response.status}`);
+	}
+
+	return response.json();
+}
+
+async function updateClerkUserMetadata(userId: string, publicMetadata: any): Promise<void> {
+	const secretKey = process.env.CLERK_SECRET_KEY;
+
+	if (!secretKey) {
+		throw new Error("CLERK_SECRET_KEY not configured");
+	}
+
+	const response = await fetch(`https://api.clerk.com/v1/users/${userId}/metadata`, {
+		method: 'PATCH',
+		headers: {
+			'Authorization': `Bearer ${secretKey}`,
+			'Content-Type': 'application/json',
+		},
+		body: JSON.stringify({ public_metadata: publicMetadata }),
+	});
+
+	if (!response.ok) {
+		throw new Error(`Failed to update user metadata: ${response.status}`);
+	}
 }
 
 function sanitizeString(input: string, maxLength: number): string {
@@ -89,10 +116,9 @@ function validateWatchlistSize(watchlist: StoredWatchlist) {
 }
 
 async function fetchWatchlistFromClerk(
-	clerk: ClerkClient,
 	userId: string,
 ): Promise<StoredWatchlist> {
-	const userRecord = await clerk.users.getUser(userId);
+	const userRecord = await getClerkUser(userId);
 	const rawWatchlist = userRecord.privateMetadata?.[WATCHLIST_METADATA_KEY];
 
 	if (!rawWatchlist || typeof rawWatchlist !== "object") {
@@ -132,17 +158,32 @@ async function fetchWatchlistFromClerk(
 }
 
 async function saveWatchlistToClerk(
-	clerk: ClerkClient,
 	userId: string,
 	next: StoredWatchlist,
 ): Promise<StoredWatchlist> {
 	validateWatchlistSize(next);
 
-	await clerk.users.updateUserMetadata(userId, {
-		privateMetadata: {
-			[WATCHLIST_METADATA_KEY]: next,
+	const secretKey = process.env.CLERK_SECRET_KEY;
+	if (!secretKey) {
+		throw new Error("CLERK_SECRET_KEY not configured");
+	}
+
+	const response = await fetch(`https://api.clerk.com/v1/users/${userId}/metadata`, {
+		method: 'PATCH',
+		headers: {
+			'Authorization': `Bearer ${secretKey}`,
+			'Content-Type': 'application/json',
 		},
+		body: JSON.stringify({
+			private_metadata: {
+				[WATCHLIST_METADATA_KEY]: next,
+			},
+		}),
 	});
+
+	if (!response.ok) {
+		throw new Error(`Failed to save watchlist to Clerk: ${response.status}`);
+	}
 
 	return next;
 }
@@ -243,8 +284,7 @@ export async function GET(request: Request) {
 	}
 
 	try {
-		const clerk = getClerk();
-		const watchlist = await fetchWatchlistFromClerk(clerk, authResult.userId);
+		const watchlist = await fetchWatchlistFromClerk(authResult.userId);
 		const maxItems = await getMaxItemsForUser(authResult.userId);
 
 		return buildResponse(watchlist, maxItems, headers, 200);
@@ -298,9 +338,8 @@ export async function POST(request: Request) {
 	}
 
 	try {
-		const clerk = getClerk();
 		const maxItems = await getMaxItemsForUser(authResult.userId);
-		const current = await fetchWatchlistFromClerk(clerk, authResult.userId);
+		const current = await fetchWatchlistFromClerk(authResult.userId);
 
 		if (
 			current.items.some(
@@ -338,7 +377,6 @@ export async function POST(request: Request) {
 		};
 
 		const saved = await saveWatchlistToClerk(
-			clerk,
 			authResult.userId,
 			nextWatchlist,
 		);
@@ -417,7 +455,6 @@ export async function PUT(request: Request) {
 		};
 
 		const saved = await saveWatchlistToClerk(
-			clerk,
 			authResult.userId,
 			nextWatchlist,
 		);
@@ -464,9 +501,8 @@ export async function DELETE(request: Request) {
 	}
 
 	try {
-		const clerk = getClerk();
 		const maxItems = await getMaxItemsForUser(authResult.userId);
-		const current = await fetchWatchlistFromClerk(clerk, authResult.userId);
+		const current = await fetchWatchlistFromClerk(authResult.userId);
 		const nextItems = current.items.filter(
 			(item) => item.symbol.toUpperCase() !== symbol,
 		);
@@ -482,7 +518,6 @@ export async function DELETE(request: Request) {
 		};
 
 		const saved = await saveWatchlistToClerk(
-			clerk,
 			authResult.userId,
 			nextWatchlist,
 		);
