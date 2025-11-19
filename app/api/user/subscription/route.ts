@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { createClerkClient } from '@clerk/backend';
 import { eq } from 'drizzle-orm';
 
 import { authenticate } from '@/lib/auth';
@@ -122,7 +121,6 @@ export async function GET(request: Request) {
       try {
         // Initialize Clerk client with secret key
         const secretKey = process.env.CLERK_SECRET_KEY;
-        const publishableKey = process.env.CLERK_PUBLISHABLE_KEY;
 
         if (!secretKey) {
           console.error('[subscription] CLERK_SECRET_KEY not configured');
@@ -132,13 +130,25 @@ export async function GET(request: Request) {
           );
         }
 
-        const clerk = createClerkClient({
-          secretKey,
-          ...(publishableKey && { publishableKey }),
+        // Fetch user details directly from Clerk API (bypassing SDK)
+        console.log(`[subscription] Fetching user ${userId} from Clerk API...`);
+        const clerkResponse = await fetch(`https://api.clerk.com/v1/users/${userId}`, {
+          headers: {
+            'Authorization': `Bearer ${secretKey}`,
+            'Content-Type': 'application/json',
+          },
         });
 
-        // Fetch user details from Clerk
-        const clerkUser = await clerk.users.getUser(userId);
+        if (!clerkResponse.ok) {
+          const errorText = await clerkResponse.text();
+          console.error(`[subscription] Clerk API error: ${clerkResponse.status} - ${errorText}`);
+          return NextResponse.json(
+            { error: 'Failed to fetch user from Clerk' },
+            { status: 500 },
+          );
+        }
+
+        const clerkUser = await clerkResponse.json();
 
         const userName = clerkUser.firstName && clerkUser.lastName
           ? `${clerkUser.firstName} ${clerkUser.lastName}`.trim()
