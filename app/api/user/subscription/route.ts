@@ -154,12 +154,15 @@ export async function GET(request: Request) {
           ? `${clerkUser.firstName} ${clerkUser.lastName}`.trim()
           : clerkUser.firstName || clerkUser.lastName || 'User';
 
-        const userEmail = clerkUser.emailAddresses.find(
-          (email) => email.id === clerkUser.primaryEmailAddressId
-        )?.emailAddress || clerkUser.emailAddresses[0]?.emailAddress;
+        // Safely extract email from Clerk user object
+        const emailAddresses = clerkUser.emailAddresses || [];
+        const userEmail = emailAddresses.find(
+          (email: any) => email.id === clerkUser.primaryEmailAddressId
+        )?.emailAddress || emailAddresses[0]?.emailAddress;
 
         if (!userEmail) {
           console.error(`[subscription] No email found for user ${userId}`);
+          console.error(`[subscription] Clerk user data:`, JSON.stringify(clerkUser, null, 2));
           return NextResponse.json(
             { error: 'User email not found in Clerk' },
             { status: 400 },
@@ -173,7 +176,7 @@ export async function GET(request: Request) {
           id: userId,
           name: userName,
           email: userEmail,
-          emailVerified: clerkUser.emailAddresses[0]?.verification?.status === 'verified' || false,
+          emailVerified: emailAddresses[0]?.verification?.status === 'verified' || false,
           image: clerkUser.imageUrl || null,
           createdAt: new Date(),
           updatedAt: new Date(),
