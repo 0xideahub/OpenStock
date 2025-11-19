@@ -339,47 +339,70 @@ export async function POST(request: Request) {
 
 	try {
 		const maxItems = await getMaxItemsForUser(authResult.userId);
-		const current = await fetchWatchlistFromClerk(authResult.userId);
 
-		if (
-			current.items.some(
-				(item) => item.symbol.toUpperCase() === symbol.toUpperCase(),
-			)
-		) {
-			return NextResponse.json(
-				{ error: "Stock already in watchlist" },
-				{ status: 409, headers },
-			);
+		// Retry logic to handle concurrent updates to Clerk metadata
+		const maxRetries = 3;
+		let retryCount = 0;
+		let saved: StoredWatchlist | null = null;
+
+		while (retryCount < maxRetries) {
+			const current = await fetchWatchlistFromClerk(authResult.userId);
+
+			// Check if stock already exists (might have been added by concurrent request)
+			if (
+				current.items.some(
+					(item) => item.symbol.toUpperCase() === symbol.toUpperCase(),
+				)
+			) {
+				console.log(`[watchlist] ${symbol} already exists (added by concurrent request), returning current state`);
+				return buildResponse(current, maxItems, headers, 200);
+			}
+
+			if (current.items.length >= maxItems) {
+				return NextResponse.json(
+					{
+						error: "Watchlist is full",
+						code: "WATCHLIST_FULL",
+						maxItems,
+					},
+					{ status: 409, headers },
+				);
+			}
+
+			const nextItem: StoredWatchlistItem = sanitizeItem({
+				symbol,
+				company,
+				addedAt: payload.addedAt ?? new Date().toISOString(),
+				note: payload.note,
+			});
+
+			const nextWatchlist: StoredWatchlist = {
+				items: [...current.items, nextItem],
+				version: current.version + 1,
+				updatedAt: new Date().toISOString(),
+			};
+
+			try {
+				saved = await saveWatchlistToClerk(
+					authResult.userId,
+					nextWatchlist,
+				);
+				console.log(`[watchlist] ✅ Added ${symbol} to watchlist (${saved.items.length} items total)`);
+				break; // Success, exit retry loop
+			} catch (saveError) {
+				retryCount++;
+				if (retryCount >= maxRetries) {
+					throw saveError; // Rethrow if all retries exhausted
+				}
+				console.warn(`[watchlist] Save conflict detected, retrying... (${retryCount}/${maxRetries})`);
+				// Small delay before retry to reduce collision chance
+				await new Promise(resolve => setTimeout(resolve, 50 * retryCount));
+			}
 		}
 
-		if (current.items.length >= maxItems) {
-			return NextResponse.json(
-				{
-					error: "Watchlist is full",
-					code: "WATCHLIST_FULL",
-					maxItems,
-				},
-				{ status: 409, headers },
-			);
+		if (!saved) {
+			throw new Error("Failed to save watchlist after retries");
 		}
-
-		const nextItem: StoredWatchlistItem = sanitizeItem({
-			symbol,
-			company,
-			addedAt: payload.addedAt ?? new Date().toISOString(),
-			note: payload.note,
-		});
-
-		const nextWatchlist: StoredWatchlist = {
-			items: [...current.items, nextItem],
-			version: current.version + 1,
-			updatedAt: new Date().toISOString(),
-		};
-
-		const saved = await saveWatchlistToClerk(
-			authResult.userId,
-			nextWatchlist,
-		);
 
 		return buildResponse(saved, maxItems, headers, 201);
 	} catch (error) {
