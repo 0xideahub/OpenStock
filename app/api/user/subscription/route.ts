@@ -150,15 +150,20 @@ export async function GET(request: Request) {
 
         const clerkUser = await clerkResponse.json();
 
-        const userName = clerkUser.firstName && clerkUser.lastName
-          ? `${clerkUser.firstName} ${clerkUser.lastName}`.trim()
-          : clerkUser.firstName || clerkUser.lastName || 'User';
+        // Clerk API returns snake_case field names
+        const firstName = clerkUser.firstName || clerkUser.first_name;
+        const lastName = clerkUser.lastName || clerkUser.last_name;
+        const userName = firstName && lastName
+          ? `${firstName} ${lastName}`.trim()
+          : firstName || lastName || 'User';
 
         // Safely extract email from Clerk user object
-        const emailAddresses = clerkUser.emailAddresses || [];
+        const emailAddresses = clerkUser.emailAddresses || clerkUser.email_addresses || [];
         const userEmail = emailAddresses.find(
-          (email: any) => email.id === clerkUser.primaryEmailAddressId
-        )?.emailAddress || emailAddresses[0]?.emailAddress;
+          (email: any) => email.id === clerkUser.primaryEmailAddressId || email.id === clerkUser.primary_email_address_id
+        )?.emailAddress || emailAddresses.find(
+          (email: any) => email.id === clerkUser.primaryEmailAddressId || email.id === clerkUser.primary_email_address_id
+        )?.email_address || emailAddresses[0]?.emailAddress || emailAddresses[0]?.email_address;
 
         if (!userEmail) {
           console.error(`[subscription] No email found for user ${userId}`);
@@ -172,19 +177,21 @@ export async function GET(request: Request) {
         console.log(`[subscription] Creating/updating user ${userId} with email ${userEmail}`);
 
         // Create user or update if email already exists (handle duplicate emails gracefully)
+        const imageUrl = clerkUser.imageUrl || clerkUser.image_url || null;
+
         await db.insert(user).values({
           id: userId,
           name: userName,
           email: userEmail,
           emailVerified: emailAddresses[0]?.verification?.status === 'verified' || false,
-          image: clerkUser.imageUrl || null,
+          image: imageUrl,
           createdAt: new Date(),
           updatedAt: new Date(),
         }).onConflictDoUpdate({
           target: user.email,
           set: {
             name: userName,
-            image: clerkUser.imageUrl || null,
+            image: imageUrl,
             updatedAt: new Date(),
           },
         });
