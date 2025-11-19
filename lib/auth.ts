@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { verifyToken } from '@clerk/backend';
+import { jwtVerify, createRemoteJWKSet } from 'jose';
 
 export interface AuthResult {
   userId: string;
@@ -28,36 +28,38 @@ export async function authenticate(request: Request): Promise<AuthResult | NextR
   const token = authHeader.replace('Bearer ', '');
 
   try {
-    const secretKey = process.env.CLERK_SECRET_KEY;
     const publishableKey = process.env.CLERK_PUBLISHABLE_KEY;
 
-    console.log('[auth] ========== CLERK KEY DEBUG ==========');
-    console.log('[auth] Secret key exists:', !!secretKey);
-    console.log('[auth] Secret key preview:', secretKey?.substring(0, 20) + '...' + secretKey?.slice(-8));
-    console.log('[auth] Publishable key exists:', !!publishableKey);
-    console.log('[auth] Publishable key preview:', publishableKey?.substring(0, 20) + '...' + publishableKey?.slice(-8));
-    console.log('[auth] Publishable key FULL:', publishableKey);
-    console.log('[auth] ========================================');
-
-    if (!secretKey) {
-      console.error('[auth] CLERK_SECRET_KEY not configured');
+    if (!publishableKey) {
+      console.error('[auth] CLERK_PUBLISHABLE_KEY not configured');
       return NextResponse.json(
         { error: 'Server authentication not configured' },
         { status: 500 }
       );
     }
 
-    const verifyOptions = {
-      secretKey,
-      ...(publishableKey && { publishableKey }),
-    };
+    // Decode the publishable key to get the Frontend API URL
+    // Clerk publishable keys are base64 encoded and contain the domain
+    const decodedKey = Buffer.from(publishableKey.replace('pk_live_', '').replace('pk_test_', ''), 'base64').toString();
+    const clerkDomain = decodedKey.split('$')[0]; // e.g., "clerk.vaulk72.com"
 
-    console.log('[auth] Calling verifyToken with options:', Object.keys(verifyOptions));
+    console.log('[auth] Using Clerk domain:', clerkDomain);
 
-    const verified = await verifyToken(token, verifyOptions);
+    // Create JWKS endpoint URL for this specific Clerk instance
+    const jwksUrl = `https://${clerkDomain}/.well-known/jwks.json`;
+    console.log('[auth] JWKS URL:', jwksUrl);
+
+    // Verify the JWT using the JWKS from the correct Clerk instance
+    const JWKS = createRemoteJWKSet(new URL(jwksUrl));
+
+    const { payload } = await jwtVerify(token, JWKS, {
+      issuer: `https://${clerkDomain}`,
+    });
+
+    console.log('[auth] ✅ JWT verified successfully for user:', payload.sub);
 
     return {
-      userId: verified.sub,
+      userId: payload.sub as string,
       method: 'jwt',
     };
   } catch (error) {
