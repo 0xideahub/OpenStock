@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
 		await clerkClient.users.updateUserMetadata(userId, {
 			publicMetadata: {
 				hasCompletedOnboarding: true,
+				watchlistInitialized: true, // Prevent double initialization
 			},
 		});
 
