@@ -428,6 +428,125 @@ export async function POST(request: Request) {
 	}
 }
 
+export async function PATCH(request: Request) {
+	const { result, headers } = await getRateLimitedHeaders(request);
+	if (!result.success) {
+		return NextResponse.json(
+			{ error: "Rate limit exceeded. Try again later." },
+			{ status: 429, headers },
+		);
+	}
+
+	const authResult = await authenticate(request);
+	if (authResult instanceof NextResponse) {
+		return authResult;
+	}
+
+	let payload: {
+		symbols?: { symbol: string; company: string; note?: string }[];
+	};
+
+	try {
+		payload = (await request.json()) as typeof payload;
+	} catch {
+		return NextResponse.json(
+			{ error: "Invalid JSON body" },
+			{ status: 400, headers },
+		);
+	}
+
+	if (!Array.isArray(payload.symbols) || payload.symbols.length === 0) {
+		return NextResponse.json(
+			{ error: "symbols array is required and must not be empty" },
+			{ status: 400, headers },
+		);
+	}
+
+	try {
+		const maxItems = await getMaxItemsForUser(authResult.userId);
+
+		// Validate all symbols upfront
+		for (const item of payload.symbols) {
+			if (!item?.symbol?.trim() || !item?.company?.trim()) {
+				return NextResponse.json(
+					{ error: "Each symbol must have symbol and company fields" },
+					{ status: 400, headers },
+				);
+			}
+		}
+
+		// Fetch current watchlist once
+		const current = await fetchWatchlistFromClerk(authResult.userId);
+		console.log(`[watchlist] PATCH batch: Current watchlist has ${current.items.length} items`);
+
+		// Build set of existing symbols for deduplication
+		const existingSymbols = new Set(
+			current.items.map(item => item.symbol.toUpperCase())
+		);
+
+		// Process new items (dedupe + sanitize)
+		const newItems: StoredWatchlistItem[] = [];
+		const now = new Date().toISOString();
+
+		for (const item of payload.symbols) {
+			const symbolUpper = item.symbol.trim().toUpperCase();
+
+			// Skip if already exists (either in current watchlist or already processed)
+			if (existingSymbols.has(symbolUpper)) {
+				console.log(`[watchlist] PATCH: Skipping duplicate ${symbolUpper}`);
+				continue;
+			}
+
+			// Check if we've hit the limit
+			if (current.items.length + newItems.length >= maxItems) {
+				console.log(`[watchlist] PATCH: Reached max items (${maxItems}), stopping`);
+				break;
+			}
+
+			const sanitized = sanitizeItem({
+				symbol: item.symbol,
+				company: item.company,
+				addedAt: now,
+				note: item.note,
+			});
+
+			newItems.push(sanitized);
+			existingSymbols.add(symbolUpper);
+		}
+
+		console.log(`[watchlist] PATCH: Adding ${newItems.length} new items to watchlist`);
+
+		// Single atomic write to Clerk
+		const nextWatchlist: StoredWatchlist = {
+			items: [...current.items, ...newItems],
+			version: current.version + 1,
+			updatedAt: now,
+		};
+
+		const saved = await saveWatchlistToClerk(
+			authResult.userId,
+			nextWatchlist,
+		);
+
+		console.log(`[watchlist] ✅ Batch added ${newItems.length} stocks to watchlist (total: ${saved.items.length})`);
+
+		return buildResponse(saved, maxItems, headers, 200);
+	} catch (error) {
+		if (error instanceof Error && error.message === "WATCHLIST_TOO_LARGE") {
+			return NextResponse.json(
+				{ error: "Watchlist payload exceeds Clerk 8KB limit" },
+				{ status: 413, headers },
+			);
+		}
+
+		console.error("[watchlist] Failed to batch add symbols:", error);
+		return NextResponse.json(
+			{ error: "Failed to batch add symbols to watchlist" },
+			{ status: 500, headers },
+		);
+	}
+}
+
 export async function PUT(request: Request) {
 	const { result, headers } = await getRateLimitedHeaders(request);
 	if (!result.success) {
@@ -461,7 +580,6 @@ export async function PUT(request: Request) {
 	}
 
 	try {
-		const clerk = getClerk();
 		const maxItems = await getMaxItemsForUser(authResult.userId);
 		const uniqueItems = new Map<string, StoredWatchlistItem>();
 
