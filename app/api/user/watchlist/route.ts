@@ -169,12 +169,13 @@ async function saveWatchlistToClerk(
 	}
 
 	const payload = {
-		private_metadata: {
+		privateMetadata: {
 			[WATCHLIST_METADATA_KEY]: next,
 		},
 	};
 
 	console.log(`[watchlist] Saving to Clerk user ${userId}:`, JSON.stringify(next.items.map(i => i.symbol)));
+	console.log(`[watchlist] Payload being sent:`, JSON.stringify(payload));
 
 	const response = await fetch(`https://api.clerk.com/v1/users/${userId}/metadata`, {
 		method: 'PATCH',
