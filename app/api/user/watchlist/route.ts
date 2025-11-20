@@ -12,6 +12,9 @@ const MAX_WATCHLIST_BYTES = 8 * 1024; // Clerk privateMetadata limit
 const COMPANY_NAME_MAX_LENGTH = 80;
 const NOTE_MAX_LENGTH = 120;
 
+// Per-user locks to serialize concurrent POST requests
+const userLocks = new Map<string, Promise<void>>();
+
 type DbModule = typeof import("@/lib/db");
 type SchemaModule = typeof import("@/lib/db/schema");
 
@@ -343,6 +346,19 @@ export async function POST(request: Request) {
 		);
 	}
 
+	// Wait for any in-flight POST request for this user to complete
+	// This serializes concurrent requests to prevent race conditions
+	while (userLocks.has(authResult.userId)) {
+		console.log(`[watchlist] POST ${symbol}: Waiting for lock on user ${authResult.userId}`);
+		await userLocks.get(authResult.userId);
+	}
+
+	// Claim the lock for this user
+	let releaseLock: (() => void) | null = null;
+	const lockPromise = new Promise<void>(resolve => { releaseLock = resolve; });
+	userLocks.set(authResult.userId, lockPromise);
+	console.log(`[watchlist] POST ${symbol}: Acquired lock for user ${authResult.userId}`);
+
 	try {
 		const maxItems = await getMaxItemsForUser(authResult.userId);
 
@@ -425,6 +441,13 @@ export async function POST(request: Request) {
 			{ error: "Failed to add symbol to watchlist" },
 			{ status: 500, headers },
 		);
+	} finally {
+		// Release the lock for this user
+		if (releaseLock) {
+			releaseLock();
+			userLocks.delete(authResult.userId);
+			console.log(`[watchlist] POST ${symbol}: Released lock for user ${authResult.userId}`);
+		}
 	}
 }
 
