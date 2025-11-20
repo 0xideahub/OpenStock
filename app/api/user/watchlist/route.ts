@@ -169,7 +169,7 @@ async function saveWatchlistToClerk(
 		throw new Error("CLERK_SECRET_KEY not configured");
 	}
 
-	console.log(`[watchlist] Saving to Clerk user ${userId}:`, JSON.stringify(next.items.map(i => i.symbol)));
+	console.log(`[watchlist] 🔧 Saving to Clerk user ${userId}:`, JSON.stringify(next.items.map(i => i.symbol)));
 
 	// Use Clerk SDK for metadata writes (REST API has issues)
 	const clerk = createClerkClient({ secretKey });
@@ -177,12 +177,16 @@ async function saveWatchlistToClerk(
 	// CRITICAL: Read existing privateMetadata first to avoid wiping other fields
 	const existingUser = await clerk.users.getUser(userId);
 	const existingPrivateMetadata = existingUser.privateMetadata || {};
+	console.log(`[watchlist] 🔍 Read existing privateMetadata keys:`, Object.keys(existingPrivateMetadata));
+
+	const mergedMetadata = {
+		...existingPrivateMetadata,  // Preserve existing fields
+		[WATCHLIST_METADATA_KEY]: next,  // Update only watchlist
+	};
+	console.log(`[watchlist] 📝 Writing merged metadata with keys:`, Object.keys(mergedMetadata));
 
 	await clerk.users.updateUserMetadata(userId, {
-		privateMetadata: {
-			...existingPrivateMetadata,  // Preserve existing fields
-			[WATCHLIST_METADATA_KEY]: next,  // Update only watchlist
-		},
+		privateMetadata: mergedMetadata,
 	});
 
 	console.log(`[watchlist] ✅ Clerk SDK updateUserMetadata completed`);
