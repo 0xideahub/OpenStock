@@ -168,22 +168,31 @@ async function saveWatchlistToClerk(
 		throw new Error("CLERK_SECRET_KEY not configured");
 	}
 
+	const payload = {
+		private_metadata: {
+			[WATCHLIST_METADATA_KEY]: next,
+		},
+	};
+
+	console.log(`[watchlist] Saving to Clerk user ${userId}:`, JSON.stringify(next.items.map(i => i.symbol)));
+
 	const response = await fetch(`https://api.clerk.com/v1/users/${userId}/metadata`, {
 		method: 'PATCH',
 		headers: {
 			'Authorization': `Bearer ${secretKey}`,
 			'Content-Type': 'application/json',
 		},
-		body: JSON.stringify({
-			private_metadata: {
-				[WATCHLIST_METADATA_KEY]: next,
-			},
-		}),
+		body: JSON.stringify(payload),
 	});
 
 	if (!response.ok) {
+		const errorText = await response.text();
+		console.error(`[watchlist] Clerk API error: ${response.status} - ${errorText}`);
 		throw new Error(`Failed to save watchlist to Clerk: ${response.status}`);
 	}
+
+	const updatedUser = await response.json();
+	console.log(`[watchlist] Clerk responded with user, metadata keys:`, Object.keys(updatedUser.privateMetadata || {}));
 
 	return next;
 }
