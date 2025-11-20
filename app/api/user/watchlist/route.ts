@@ -297,3 +297,122 @@ export async function DELETE(request: Request) {
 		);
 	}
 }
+
+/**
+ * PATCH /api/user/watchlist
+ * Batch add multiple stocks to the watchlist (used for onboarding initialization)
+ */
+export async function PATCH(request: Request) {
+	const { result, headers } = await getRateLimitedHeaders(request);
+	if (!result.success) {
+		return NextResponse.json(
+			{ error: "Rate limit exceeded. Try again later." },
+			{ status: 429, headers },
+		);
+	}
+
+	const authResult = await authenticate(request);
+	if (authResult instanceof NextResponse) {
+		return authResult;
+	}
+
+	let payload: {
+		symbols?: { symbol: string; company: string; note?: string }[];
+	};
+
+	try {
+		payload = (await request.json()) as typeof payload;
+	} catch {
+		return NextResponse.json(
+			{ error: "Invalid JSON body" },
+			{ status: 400, headers },
+		);
+	}
+
+	if (!Array.isArray(payload.symbols) || payload.symbols.length === 0) {
+		return NextResponse.json(
+			{ error: "symbols array is required and must not be empty" },
+			{ status: 400, headers },
+		);
+	}
+
+	try {
+		const maxItems = await getMaxItemsForUser(authResult.userId);
+
+		// Get current count
+		const currentCount = await db.$count(watchlist, eq(watchlist.userId, authResult.userId));
+
+		// Build set of existing symbols to avoid duplicates
+		const existing = await db.query.watchlist.findMany({
+			where: eq(watchlist.userId, authResult.userId),
+			columns: { symbol: true },
+		});
+		const existingSymbols = new Set(existing.map(item => item.symbol.toUpperCase()));
+
+		// Filter and prepare new items
+		const newItems: Array<{ id: string; userId: string; symbol: string; company: string; note: string | null }> = [];
+
+		for (const item of payload.symbols) {
+			if (!item?.symbol?.trim() || !item?.company?.trim()) {
+				continue; // Skip invalid items
+			}
+
+			const symbolUpper = item.symbol.trim().toUpperCase();
+
+			// Skip duplicates
+			if (existingSymbols.has(symbolUpper)) {
+				console.log(`[watchlist] PATCH: Skipping duplicate ${symbolUpper}`);
+				continue;
+			}
+
+			// Check if we've hit the limit
+			if (currentCount + newItems.length >= maxItems) {
+				console.log(`[watchlist] PATCH: Reached max items (${maxItems}), stopping`);
+				break;
+			}
+
+			newItems.push({
+				id: nanoid(),
+				userId: authResult.userId,
+				symbol: symbolUpper,
+				company: item.company.trim(),
+				note: item.note?.trim() || null,
+			});
+
+			existingSymbols.add(symbolUpper);
+		}
+
+		console.log(`[watchlist] 📦 PATCH: Batch adding ${newItems.length} stocks for user ${authResult.userId}`);
+
+		// Single atomic batch insert
+		if (newItems.length > 0) {
+			await db.insert(watchlist).values(newItems);
+			console.log(`[watchlist] ✅ PATCH: Batch inserted ${newItems.length} stocks`);
+		}
+
+		// Return updated watchlist
+		const items = await db.query.watchlist.findMany({
+			where: eq(watchlist.userId, authResult.userId),
+			orderBy: [desc(watchlist.addedAt)],
+		});
+
+		const response: WatchlistResponse = {
+			items: items.map(item => ({
+				id: item.id,
+				symbol: item.symbol,
+				company: item.company,
+				note: item.note || undefined,
+				addedAt: item.addedAt.toISOString(),
+			})),
+			maxItems,
+		};
+
+		return NextResponse.json(response, { status: 200, headers });
+	} catch (error) {
+		console.error("[watchlist] Failed to batch add symbols:", error);
+		return NextResponse.json(
+			{ error: "Failed to batch add symbols to watchlist" },
+			{ status: 500, headers },
+		);
+	}
+}
