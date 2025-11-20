@@ -174,9 +174,14 @@ async function saveWatchlistToClerk(
 	// Use Clerk SDK for metadata writes (REST API has issues)
 	const clerk = createClerkClient({ secretKey });
 
+	// CRITICAL: Read existing privateMetadata first to avoid wiping other fields
+	const existingUser = await clerk.users.getUser(userId);
+	const existingPrivateMetadata = existingUser.privateMetadata || {};
+
 	await clerk.users.updateUserMetadata(userId, {
 		privateMetadata: {
-			[WATCHLIST_METADATA_KEY]: next,
+			...existingPrivateMetadata,  // Preserve existing fields
+			[WATCHLIST_METADATA_KEY]: next,  // Update only watchlist
 		},
 	});
 
