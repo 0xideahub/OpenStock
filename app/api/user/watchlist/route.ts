@@ -387,7 +387,21 @@ export async function POST(request: Request) {
 					authResult.userId,
 					nextWatchlist,
 				);
-				console.log(`[watchlist] ✅ Added ${symbol} to watchlist (${saved.items.length} items total)`);
+
+				// Verify the save by re-fetching and checking if our stock is there
+				// This handles Clerk's eventual consistency
+				await new Promise(resolve => setTimeout(resolve, 100));
+				const verification = await fetchWatchlistFromClerk(authResult.userId);
+				const stockExists = verification.items.some(
+					item => item.symbol.toUpperCase() === symbol.toUpperCase()
+				);
+
+				if (!stockExists) {
+					throw new Error(`Stock ${symbol} not found after save - Clerk propagation delay`);
+				}
+
+				console.log(`[watchlist] ✅ Added ${symbol} to watchlist (${verification.items.length} items total)`);
+				saved = verification; // Return the verified state
 				break; // Success, exit retry loop
 			} catch (saveError) {
 				retryCount++;
@@ -395,8 +409,8 @@ export async function POST(request: Request) {
 					throw saveError; // Rethrow if all retries exhausted
 				}
 				console.warn(`[watchlist] Save conflict detected, retrying... (${retryCount}/${maxRetries})`);
-				// Small delay before retry to reduce collision chance
-				await new Promise(resolve => setTimeout(resolve, 50 * retryCount));
+				// Exponential backoff: 100ms, 200ms, 300ms
+				await new Promise(resolve => setTimeout(resolve, 100 * (retryCount + 1)));
 			}
 		}
 
