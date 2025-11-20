@@ -1,3 +1,4 @@
+import { createClerkClient } from "@clerk/backend";
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 
@@ -168,33 +169,18 @@ async function saveWatchlistToClerk(
 		throw new Error("CLERK_SECRET_KEY not configured");
 	}
 
-	const payload = {
+	console.log(`[watchlist] Saving to Clerk user ${userId}:`, JSON.stringify(next.items.map(i => i.symbol)));
+
+	// Use Clerk SDK for metadata writes (REST API has issues)
+	const clerk = createClerkClient({ secretKey });
+
+	await clerk.users.updateUserMetadata(userId, {
 		privateMetadata: {
 			[WATCHLIST_METADATA_KEY]: next,
 		},
-	};
-
-	console.log(`[watchlist] Saving to Clerk user ${userId}:`, JSON.stringify(next.items.map(i => i.symbol)));
-	console.log(`[watchlist] Payload being sent:`, JSON.stringify(payload));
-
-	const response = await fetch(`https://api.clerk.com/v1/users/${userId}/metadata`, {
-		method: 'PATCH',
-		headers: {
-			'Authorization': `Bearer ${secretKey}`,
-			'Content-Type': 'application/json',
-		},
-		body: JSON.stringify(payload),
 	});
 
-	if (!response.ok) {
-		const errorText = await response.text();
-		console.error(`[watchlist] Clerk API error: ${response.status} - ${errorText}`);
-		throw new Error(`Failed to save watchlist to Clerk: ${response.status}`);
-	}
-
-	const updatedUser = await response.json();
-	console.log(`[watchlist] Clerk response - privateMetadata:`, JSON.stringify(updatedUser.privateMetadata));
-	console.log(`[watchlist] Clerk response - publicMetadata:`, JSON.stringify(updatedUser.publicMetadata));
+	console.log(`[watchlist] ✅ Clerk SDK updateUserMetadata completed`);
 
 	// Verify the save by reading back
 	const verification = await getClerkUser(userId);
