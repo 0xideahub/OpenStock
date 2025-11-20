@@ -1,279 +1,48 @@
-import { createClerkClient } from "@clerk/backend";
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
+import { nanoid } from "nanoid";
 
 import { authenticate } from "@/lib/auth";
 import { checkRateLimit, getRateLimitHeaders } from "@/lib/ratelimit";
+import { db } from "@/lib/db";
+import { watchlist, user } from "@/lib/db/schema";
 
 const MAX_FREE_WATCHLIST_ITEMS = 15;
 const MAX_PREMIUM_WATCHLIST_ITEMS = 40;
-const WATCHLIST_METADATA_KEY = "watchlist";
-const MAX_WATCHLIST_BYTES = 8 * 1024; // Clerk privateMetadata limit
-const COMPANY_NAME_MAX_LENGTH = 80;
-const NOTE_MAX_LENGTH = 120;
 
-type DbModule = typeof import("@/lib/db");
-type SchemaModule = typeof import("@/lib/db/schema");
-
-let cachedDb: DbModule["db"] | null = null;
-let cachedUserTable: SchemaModule["user"] | null = null;
-let missingDatabaseLogged = false;
-
-interface StoredWatchlistItem {
+interface WatchlistItem {
+	id: string;
 	symbol: string;
 	company: string;
-	addedAt: string;
 	note?: string;
+	addedAt: string;
 }
 
-interface StoredWatchlist {
-	items: StoredWatchlistItem[];
-	version: number;
-	updatedAt: string;
-}
-
-interface WatchlistResponse extends StoredWatchlist {
+interface WatchlistResponse {
+	items: WatchlistItem[];
 	maxItems: number;
-}
-
-function buildEmptyWatchlist(): StoredWatchlist {
-	const now = new Date().toISOString();
-	return {
-		items: [],
-		version: 1,
-		updatedAt: now,
-	};
-}
-
-async function getClerkUser(userId: string): Promise<any> {
-	const secretKey = process.env.CLERK_SECRET_KEY;
-
-	if (!secretKey) {
-		throw new Error("CLERK_SECRET_KEY not configured");
-	}
-
-	const response = await fetch(`https://api.clerk.com/v1/users/${userId}`, {
-		headers: {
-			'Authorization': `Bearer ${secretKey}`,
-			'Content-Type': 'application/json',
-		},
-	});
-
-	if (!response.ok) {
-		throw new Error(`Failed to fetch user from Clerk: ${response.status}`);
-	}
-
-	return response.json();
-}
-
-async function updateClerkUserMetadata(userId: string, publicMetadata: any): Promise<void> {
-	const secretKey = process.env.CLERK_SECRET_KEY;
-
-	if (!secretKey) {
-		throw new Error("CLERK_SECRET_KEY not configured");
-	}
-
-	const response = await fetch(`https://api.clerk.com/v1/users/${userId}/metadata`, {
-		method: 'PATCH',
-		headers: {
-			'Authorization': `Bearer ${secretKey}`,
-			'Content-Type': 'application/json',
-		},
-		body: JSON.stringify({ public_metadata: publicMetadata }),
-	});
-
-	if (!response.ok) {
-		throw new Error(`Failed to update user metadata: ${response.status}`);
-	}
-}
-
-function sanitizeString(input: string, maxLength: number): string {
-	return input.trim().slice(0, maxLength);
-}
-
-function safeDate(value?: string): string {
-	const parsed = value ? new Date(value) : new Date();
-	return Number.isNaN(parsed.getTime())
-		? new Date().toISOString()
-		: parsed.toISOString();
-}
-
-function sanitizeItem(item: StoredWatchlistItem): StoredWatchlistItem {
-	return {
-		symbol: item.symbol.trim().toUpperCase(),
-		company: sanitizeString(item.company, COMPANY_NAME_MAX_LENGTH),
-		addedAt: safeDate(item.addedAt),
-		note: item.note ? sanitizeString(item.note, NOTE_MAX_LENGTH) : undefined,
-	};
-}
-
-function validateWatchlistSize(watchlist: StoredWatchlist) {
-	const payload = JSON.stringify(watchlist);
-	const bytes = Buffer.byteLength(payload, "utf8");
-
-	if (bytes > MAX_WATCHLIST_BYTES) {
-		throw new Error("WATCHLIST_TOO_LARGE");
-	}
-}
-
-async function fetchWatchlistFromClerk(
-	userId: string,
-): Promise<StoredWatchlist> {
-	const userRecord = await getClerkUser(userId);
-	const rawWatchlist = userRecord.privateMetadata?.[WATCHLIST_METADATA_KEY];
-
-	if (!rawWatchlist || typeof rawWatchlist !== "object") {
-		return buildEmptyWatchlist();
-	}
-
-	try {
-		const parsed = rawWatchlist as StoredWatchlist;
-
-		const sanitizedItems = Array.isArray(parsed.items)
-			? parsed.items
-					.filter(
-						(item): item is StoredWatchlistItem =>
-							Boolean(item?.symbol) && Boolean(item?.company),
-					)
-					.map(sanitizeItem)
-			: [];
-
-		const watchlist: StoredWatchlist = {
-			items: sanitizedItems,
-			version:
-				typeof parsed.version === "number" && parsed.version > 0
-					? parsed.version
-					: 1,
-			updatedAt: parsed.updatedAt ?? new Date().toISOString(),
-		};
-
-		validateWatchlistSize(watchlist);
-		return watchlist;
-	} catch (error) {
-		console.error(
-			`[watchlist] Failed to parse watchlist for user ${userId}, resetting`,
-			error,
-		);
-		return buildEmptyWatchlist();
-	}
-}
-
-async function saveWatchlistToClerk(
-	userId: string,
-	next: StoredWatchlist,
-): Promise<StoredWatchlist> {
-	validateWatchlistSize(next);
-
-	const secretKey = process.env.CLERK_SECRET_KEY;
-	if (!secretKey) {
-		throw new Error("CLERK_SECRET_KEY not configured");
-	}
-
-	console.log(`[watchlist] 🔧 Saving to Clerk user ${userId}:`, JSON.stringify(next.items.map(i => i.symbol)));
-
-	// Use Clerk SDK for metadata writes (REST API has issues)
-	const clerk = createClerkClient({ secretKey });
-
-	// CRITICAL: Read existing privateMetadata first to avoid wiping other fields
-	const existingUser = await clerk.users.getUser(userId);
-	const existingPrivateMetadata = existingUser.privateMetadata || {};
-	console.log(`[watchlist] 🔍 Read existing privateMetadata keys:`, Object.keys(existingPrivateMetadata));
-
-	const mergedMetadata = {
-		...existingPrivateMetadata,  // Preserve existing fields
-		[WATCHLIST_METADATA_KEY]: next,  // Update only watchlist
-	};
-	console.log(`[watchlist] 📝 Writing merged metadata with keys:`, Object.keys(mergedMetadata));
-
-	await clerk.users.updateUserMetadata(userId, {
-		privateMetadata: mergedMetadata,
-	});
-
-	console.log(`[watchlist] ✅ Clerk SDK updateUserMetadata completed`);
-
-	// Verify the save by reading back
-	const verification = await getClerkUser(userId);
-	const verifiedWatchlist = verification.privateMetadata?.[WATCHLIST_METADATA_KEY];
-	if (verifiedWatchlist) {
-		console.log(`[watchlist] Verification: Clerk now has ${verifiedWatchlist.items?.length || 0} items:`, JSON.stringify(verifiedWatchlist.items?.map((i: any) => i.symbol) || []));
-	} else {
-		console.warn(`[watchlist] WARNING: Verification shows no watchlist in Clerk metadata!`);
-	}
-
-	return next;
-}
-
-async function ensureDatabase() {
-	if (!process.env.DATABASE_URL) {
-		if (!missingDatabaseLogged) {
-			console.warn(
-				"🛰️ [watchlist] DATABASE_URL not configured, defaulting to free-tier limits",
-			);
-			missingDatabaseLogged = true;
-		}
-		return null;
-	}
-
-	if (cachedDb && cachedUserTable) {
-		return {
-			db: cachedDb,
-			user: cachedUserTable,
-		};
-	}
-
-	try {
-		const [{ db }, { user }] = await Promise.all([
-			import("@/lib/db"),
-			import("@/lib/db/schema"),
-		]);
-		cachedDb = db;
-		cachedUserTable = user;
-		return { db, user };
-	} catch (error) {
-		console.error("🛰️ [watchlist] Failed to initialize database connection:", error);
-		return null;
-	}
 }
 
 async function getMaxItemsForUser(userId: string): Promise<number> {
 	try {
-		const dbResources = await ensureDatabase();
-		if (!dbResources) {
-			return MAX_FREE_WATCHLIST_ITEMS;
-		}
-
-		const record = await dbResources.db.query.user.findFirst({
-			where: eq(dbResources.user.id, userId),
+		const userRecord = await db.query.user.findFirst({
+			where: eq(user.id, userId),
 			columns: {
 				stripeSubscriptionStatus: true,
 			},
 		});
 
-		const status = record?.stripeSubscriptionStatus;
+		const status = userRecord?.stripeSubscriptionStatus;
 
 		if (status === "active" || status === "trialing") {
 			return MAX_PREMIUM_WATCHLIST_ITEMS;
 		}
+
+		return MAX_FREE_WATCHLIST_ITEMS;
 	} catch (error) {
-		console.error(
-			`[watchlist] Failed to resolve subscription status for ${userId}:`,
-			error,
-		);
+		console.error(`[watchlist] Failed to resolve subscription status for ${userId}:`, error);
 		return MAX_FREE_WATCHLIST_ITEMS;
 	}
-}
-
-function buildResponse(
-	watchlist: StoredWatchlist,
-	maxItems: number,
-	headers: Record<string, string>,
-	status: number,
-) {
-	const response: WatchlistResponse = {
-		...watchlist,
-		maxItems,
-	};
-	return NextResponse.json(response, { status, headers });
 }
 
 async function getRateLimitedHeaders(request: Request) {
@@ -284,6 +53,10 @@ async function getRateLimitedHeaders(request: Request) {
 	};
 }
 
+/**
+ * GET /api/user/watchlist
+ * Fetch user's watchlist from Neon database
+ */
 export async function GET(request: Request) {
 	const { result, headers } = await getRateLimitedHeaders(request);
 	if (!result.success) {
@@ -299,10 +72,27 @@ export async function GET(request: Request) {
 	}
 
 	try {
-		const watchlist = await fetchWatchlistFromClerk(authResult.userId);
+		const items = await db.query.watchlist.findMany({
+			where: eq(watchlist.userId, authResult.userId),
+			orderBy: [desc(watchlist.addedAt)],
+		});
+
 		const maxItems = await getMaxItemsForUser(authResult.userId);
 
-		return buildResponse(watchlist, maxItems, headers, 200);
+		const response: WatchlistResponse = {
+			items: items.map(item => ({
+				id: item.id,
+				symbol: item.symbol,
+				company: item.company,
+				note: item.note || undefined,
+				addedAt: item.addedAt.toISOString(),
+			})),
+			maxItems,
+		};
+
+		console.log(`[watchlist] ✅ GET: User ${authResult.userId} has ${items.length} items`);
+
+		return NextResponse.json(response, { status: 200, headers });
 	} catch (error) {
 		console.error("[watchlist] Failed to load watchlist:", error);
 		return NextResponse.json(
@@ -312,6 +102,10 @@ export async function GET(request: Request) {
 	}
 }
 
+/**
+ * POST /api/user/watchlist
+ * Add a stock to the watchlist
+ */
 export async function POST(request: Request) {
 	const { result, headers } = await getRateLimitedHeaders(request);
 	if (!result.success) {
@@ -329,7 +123,6 @@ export async function POST(request: Request) {
 	let payload: {
 		symbol?: string;
 		company?: string;
-		addedAt?: string;
 		note?: string;
 	};
 
@@ -342,8 +135,8 @@ export async function POST(request: Request) {
 		);
 	}
 
-	const symbol = payload.symbol?.trim();
-		const company = payload.company?.trim();
+	const symbol = payload.symbol?.trim().toUpperCase();
+	const company = payload.company?.trim();
 
 	if (!symbol || !company) {
 		return NextResponse.json(
@@ -355,80 +148,81 @@ export async function POST(request: Request) {
 	try {
 		const maxItems = await getMaxItemsForUser(authResult.userId);
 
-		// Retry logic to handle concurrent updates to Clerk metadata
-		const maxRetries = 3;
-		let retryCount = 0;
-		let saved: StoredWatchlist | null = null;
+		// Check if already exists
+		const existing = await db.query.watchlist.findFirst({
+			where: and(
+				eq(watchlist.userId, authResult.userId),
+				eq(watchlist.symbol, symbol)
+			),
+		});
 
-		while (retryCount < maxRetries) {
-			const current = await fetchWatchlistFromClerk(authResult.userId);
-			console.log(`[watchlist] POST ${symbol}: Current watchlist has ${current.items.length} items:`, JSON.stringify(current.items.map(i => i.symbol)));
+		if (existing) {
+			console.log(`[watchlist] ⚠️ ${symbol} already exists for user ${authResult.userId}`);
 
-			// Check if stock already exists (might have been added by concurrent request)
-			if (
-				current.items.some(
-					(item) => item.symbol.toUpperCase() === symbol.toUpperCase(),
-				)
-			) {
-				console.log(`[watchlist] ${symbol} already exists (added by concurrent request), returning current state`);
-				return buildResponse(current, maxItems, headers, 200);
-			}
-
-			if (current.items.length >= maxItems) {
-				return NextResponse.json(
-					{
-						error: "Watchlist is full",
-						code: "WATCHLIST_FULL",
-						maxItems,
-					},
-					{ status: 409, headers },
-				);
-			}
-
-			const nextItem: StoredWatchlistItem = sanitizeItem({
-				symbol,
-				company,
-				addedAt: payload.addedAt ?? new Date().toISOString(),
-				note: payload.note,
+			// Return current watchlist
+			const items = await db.query.watchlist.findMany({
+				where: eq(watchlist.userId, authResult.userId),
+				orderBy: [desc(watchlist.addedAt)],
 			});
 
-			const nextWatchlist: StoredWatchlist = {
-				items: [...current.items, nextItem],
-				version: current.version + 1,
-				updatedAt: new Date().toISOString(),
+			const response: WatchlistResponse = {
+				items: items.map(item => ({
+					id: item.id,
+					symbol: item.symbol,
+					company: item.company,
+					note: item.note || undefined,
+					addedAt: item.addedAt.toISOString(),
+				})),
+				maxItems,
 			};
 
-			try {
-				saved = await saveWatchlistToClerk(
-					authResult.userId,
-					nextWatchlist,
-				);
-				console.log(`[watchlist] ✅ Added ${symbol} to watchlist`);
-				break; // Success, exit retry loop
-			} catch (saveError) {
-				retryCount++;
-				if (retryCount >= maxRetries) {
-					throw saveError; // Rethrow if all retries exhausted
-				}
-				console.warn(`[watchlist] Save conflict detected, retrying... (${retryCount}/${maxRetries})`);
-				// Exponential backoff: 100ms, 200ms, 300ms
-				await new Promise(resolve => setTimeout(resolve, 100 * (retryCount + 1)));
-			}
+			return NextResponse.json(response, { status: 200, headers });
 		}
 
-		if (!saved) {
-			throw new Error("Failed to save watchlist after retries");
-		}
+		// Check count limit
+		const count = await db.$count(watchlist, eq(watchlist.userId, authResult.userId));
 
-		return buildResponse(saved, maxItems, headers, 201);
-	} catch (error) {
-		if (error instanceof Error && error.message === "WATCHLIST_TOO_LARGE") {
+		if (count >= maxItems) {
 			return NextResponse.json(
-				{ error: "Watchlist payload exceeds Clerk 8KB limit" },
-				{ status: 413, headers },
+				{
+					error: "Watchlist is full",
+					code: "WATCHLIST_FULL",
+					maxItems,
+				},
+				{ status: 409, headers },
 			);
 		}
 
+		// Insert new item
+		await db.insert(watchlist).values({
+			id: nanoid(),
+			userId: authResult.userId,
+			symbol,
+			company,
+			note: payload.note?.trim() || null,
+		});
+
+		console.log(`[watchlist] ✅ POST: Added ${symbol} for user ${authResult.userId}`);
+
+		// Return updated watchlist
+		const items = await db.query.watchlist.findMany({
+			where: eq(watchlist.userId, authResult.userId),
+			orderBy: [desc(watchlist.addedAt)],
+		});
+
+		const response: WatchlistResponse = {
+			items: items.map(item => ({
+				id: item.id,
+				symbol: item.symbol,
+				company: item.company,
+				note: item.note || undefined,
+				addedAt: item.addedAt.toISOString(),
+			})),
+			maxItems,
+		};
+
+		return NextResponse.json(response, { status: 201, headers });
+	} catch (error) {
 		console.error("[watchlist] Failed to add symbol to watchlist:", error);
 		return NextResponse.json(
 			{ error: "Failed to add symbol to watchlist" },
@@ -437,202 +231,10 @@ export async function POST(request: Request) {
 	}
 }
 
-export async function PATCH(request: Request) {
-	const { result, headers } = await getRateLimitedHeaders(request);
-	if (!result.success) {
-		return NextResponse.json(
-			{ error: "Rate limit exceeded. Try again later." },
-			{ status: 429, headers },
-		);
-	}
-
-	const authResult = await authenticate(request);
-	if (authResult instanceof NextResponse) {
-		return authResult;
-	}
-
-	let payload: {
-		symbols?: { symbol: string; company: string; note?: string }[];
-	};
-
-	try {
-		payload = (await request.json()) as typeof payload;
-	} catch {
-		return NextResponse.json(
-			{ error: "Invalid JSON body" },
-			{ status: 400, headers },
-		);
-	}
-
-	if (!Array.isArray(payload.symbols) || payload.symbols.length === 0) {
-		return NextResponse.json(
-			{ error: "symbols array is required and must not be empty" },
-			{ status: 400, headers },
-		);
-	}
-
-	try {
-		const maxItems = await getMaxItemsForUser(authResult.userId);
-
-		// Validate all symbols upfront
-		for (const item of payload.symbols) {
-			if (!item?.symbol?.trim() || !item?.company?.trim()) {
-				return NextResponse.json(
-					{ error: "Each symbol must have symbol and company fields" },
-					{ status: 400, headers },
-				);
-			}
-		}
-
-		// Fetch current watchlist once
-		const current = await fetchWatchlistFromClerk(authResult.userId);
-		console.log(`[watchlist] PATCH batch: Current watchlist has ${current.items.length} items`);
-
-		// Build set of existing symbols for deduplication
-		const existingSymbols = new Set(
-			current.items.map(item => item.symbol.toUpperCase())
-		);
-
-		// Process new items (dedupe + sanitize)
-		const newItems: StoredWatchlistItem[] = [];
-		const now = new Date().toISOString();
-
-		for (const item of payload.symbols) {
-			const symbolUpper = item.symbol.trim().toUpperCase();
-
-			// Skip if already exists (either in current watchlist or already processed)
-			if (existingSymbols.has(symbolUpper)) {
-				console.log(`[watchlist] PATCH: Skipping duplicate ${symbolUpper}`);
-				continue;
-			}
-
-			// Check if we've hit the limit
-			if (current.items.length + newItems.length >= maxItems) {
-				console.log(`[watchlist] PATCH: Reached max items (${maxItems}), stopping`);
-				break;
-			}
-
-			const sanitized = sanitizeItem({
-				symbol: item.symbol,
-				company: item.company,
-				addedAt: now,
-				note: item.note,
-			});
-
-			newItems.push(sanitized);
-			existingSymbols.add(symbolUpper);
-		}
-
-		console.log(`[watchlist] PATCH: Adding ${newItems.length} new items to watchlist`);
-
-		// Single atomic write to Clerk
-		const nextWatchlist: StoredWatchlist = {
-			items: [...current.items, ...newItems],
-			version: current.version + 1,
-			updatedAt: now,
-		};
-
-		const saved = await saveWatchlistToClerk(
-			authResult.userId,
-			nextWatchlist,
-		);
-
-		console.log(`[watchlist] ✅ Batch added ${newItems.length} stocks to watchlist (total: ${saved.items.length})`);
-
-		return buildResponse(saved, maxItems, headers, 200);
-	} catch (error) {
-		if (error instanceof Error && error.message === "WATCHLIST_TOO_LARGE") {
-			return NextResponse.json(
-				{ error: "Watchlist payload exceeds Clerk 8KB limit" },
-				{ status: 413, headers },
-			);
-		}
-
-		console.error("[watchlist] Failed to batch add symbols:", error);
-		return NextResponse.json(
-			{ error: "Failed to batch add symbols to watchlist" },
-			{ status: 500, headers },
-		);
-	}
-}
-
-export async function PUT(request: Request) {
-	const { result, headers } = await getRateLimitedHeaders(request);
-	if (!result.success) {
-		return NextResponse.json(
-			{ error: "Rate limit exceeded. Try again later." },
-			{ status: 429, headers },
-		);
-	}
-
-	const authResult = await authenticate(request);
-	if (authResult instanceof NextResponse) {
-		return authResult;
-	}
-
-	let payload: { items?: StoredWatchlistItem[] };
-
-	try {
-		payload = (await request.json()) as typeof payload;
-	} catch {
-		return NextResponse.json(
-			{ error: "Invalid JSON body" },
-			{ status: 400, headers },
-		);
-	}
-
-	if (!Array.isArray(payload.items)) {
-		return NextResponse.json(
-			{ error: "items array is required" },
-			{ status: 400, headers },
-		);
-	}
-
-	try {
-		const maxItems = await getMaxItemsForUser(authResult.userId);
-		const uniqueItems = new Map<string, StoredWatchlistItem>();
-
-		for (const item of payload.items) {
-			if (!item?.symbol || !item?.company) {
-				continue;
-			}
-
-			const sanitized = sanitizeItem(item);
-			if (uniqueItems.size < maxItems) {
-				uniqueItems.set(sanitized.symbol, sanitized);
-			} else {
-				break;
-			}
-		}
-
-		const nextWatchlist: StoredWatchlist = {
-			items: Array.from(uniqueItems.values()),
-			version: Date.now(),
-			updatedAt: new Date().toISOString(),
-		};
-
-		const saved = await saveWatchlistToClerk(
-			authResult.userId,
-			nextWatchlist,
-		);
-
-		return buildResponse(saved, maxItems, headers, 200);
-	} catch (error) {
-		if (error instanceof Error && error.message === "WATCHLIST_TOO_LARGE") {
-			return NextResponse.json(
-				{ error: "Watchlist payload exceeds Clerk 8KB limit" },
-				{ status: 413, headers },
-			);
-		}
-
-		console.error("[watchlist] Failed to replace watchlist:", error);
-		return NextResponse.json(
-			{ error: "Failed to replace watchlist" },
-			{ status: 500, headers },
-		);
-	}
-}
-
+/**
+ * DELETE /api/user/watchlist?symbol=AAPL
+ * Remove a stock from the watchlist
+ */
 export async function DELETE(request: Request) {
 	const { result, headers } = await getRateLimitedHeaders(request);
 	if (!result.success) {
@@ -658,36 +260,36 @@ export async function DELETE(request: Request) {
 	}
 
 	try {
-		const maxItems = await getMaxItemsForUser(authResult.userId);
-		const current = await fetchWatchlistFromClerk(authResult.userId);
-		const nextItems = current.items.filter(
-			(item) => item.symbol.toUpperCase() !== symbol,
+		await db.delete(watchlist).where(
+			and(
+				eq(watchlist.userId, authResult.userId),
+				eq(watchlist.symbol, symbol)
+			)
 		);
 
-		if (nextItems.length === current.items.length) {
-			return buildResponse(current, maxItems, headers, 200);
-		}
+		console.log(`[watchlist] ✅ DELETE: Removed ${symbol} for user ${authResult.userId}`);
 
-		const nextWatchlist: StoredWatchlist = {
-			items: nextItems,
-			version: current.version + 1,
-			updatedAt: new Date().toISOString(),
+		const maxItems = await getMaxItemsForUser(authResult.userId);
+
+		// Return updated watchlist
+		const items = await db.query.watchlist.findMany({
+			where: eq(watchlist.userId, authResult.userId),
+			orderBy: [desc(watchlist.addedAt)],
+		});
+
+		const response: WatchlistResponse = {
+			items: items.map(item => ({
+				id: item.id,
+				symbol: item.symbol,
+				company: item.company,
+				note: item.note || undefined,
+				addedAt: item.addedAt.toISOString(),
+			})),
+			maxItems,
 		};
 
-		const saved = await saveWatchlistToClerk(
-			authResult.userId,
-			nextWatchlist,
-		);
-
-		return buildResponse(saved, maxItems, headers, 200);
+		return NextResponse.json(response, { status: 200, headers });
 	} catch (error) {
-		if (error instanceof Error && error.message === "WATCHLIST_TOO_LARGE") {
-			return NextResponse.json(
-				{ error: "Watchlist payload exceeds Clerk 8KB limit" },
-				{ status: 413, headers },
-			);
-		}
-
 		console.error("[watchlist] Failed to remove symbol:", error);
 		return NextResponse.json(
 			{ error: "Failed to remove symbol from watchlist" },

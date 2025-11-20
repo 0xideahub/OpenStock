@@ -51,3 +51,15 @@ export const verification = pgTable('verification', {
   value: text('value').notNull(),
   expiresAt: timestamp('expires_at').notNull(),
 });
+
+// Watchlist table
+export const watchlist = pgTable('watchlist', {
+  id: text('id').primaryKey(),
+  userId: text('user_id')
+    .notNull()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  symbol: text('symbol').notNull(),
+  company: text('company').notNull(),
+  note: text('note'),
+  addedAt: timestamp('added_at').notNull().defaultNow(),
+});
