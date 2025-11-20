@@ -192,7 +192,17 @@ async function saveWatchlistToClerk(
 	}
 
 	const updatedUser = await response.json();
-	console.log(`[watchlist] Clerk responded with user, metadata keys:`, Object.keys(updatedUser.privateMetadata || {}));
+	console.log(`[watchlist] Clerk response - privateMetadata:`, JSON.stringify(updatedUser.privateMetadata));
+	console.log(`[watchlist] Clerk response - publicMetadata:`, JSON.stringify(updatedUser.publicMetadata));
+
+	// Verify the save by reading back
+	const verification = await getClerkUser(userId);
+	const verifiedWatchlist = verification.privateMetadata?.[WATCHLIST_METADATA_KEY];
+	if (verifiedWatchlist) {
+		console.log(`[watchlist] Verification: Clerk now has ${verifiedWatchlist.items?.length || 0} items:`, JSON.stringify(verifiedWatchlist.items?.map((i: any) => i.symbol) || []));
+	} else {
+		console.warn(`[watchlist] WARNING: Verification shows no watchlist in Clerk metadata!`);
+	}
 
 	return next;
 }
@@ -356,6 +366,7 @@ export async function POST(request: Request) {
 
 		while (retryCount < maxRetries) {
 			const current = await fetchWatchlistFromClerk(authResult.userId);
+			console.log(`[watchlist] POST ${symbol}: Current watchlist has ${current.items.length} items:`, JSON.stringify(current.items.map(i => i.symbol)));
 
 			// Check if stock already exists (might have been added by concurrent request)
 			if (
